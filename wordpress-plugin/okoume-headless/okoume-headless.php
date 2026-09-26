@@ -1,0 +1,94 @@
+<?php
+/**
+ * Plugin Name: OKOUMÉ Headless Commerce
+ * Description: Product fields and secured API for the OKOUMÉ PWA.
+ * Version: 1.0.0
+ */
+defined('ABSPATH') || exit;
+
+final class Okoume_Headless_Commerce {
+  const COOKIE = 'okoume_session';
+  const META = ['condition','storage','color','battery','warranty','accessories','technical_controls','defects'];
+  public function __construct() {
+    add_action('init', [$this, 'register_categories']);
+    add_action('woocommerce_product_options_general_product_data', [$this, 'product_fields']);
+    add_action('woocommerce_process_product_meta', [$this, 'save_product_fields']);
+    add_action('rest_api_init', [$this, 'routes']);
+  }
+  public function register_categories() {
+    foreach (['smartphones'=>'Smartphones','ordinateurs'=>'Ordinateurs','tablettes'=>'Tablettes','gaming'=>'Gaming','accessoires'=>'Accessoires'] as $slug=>$name) {
+      if (!term_exists($slug, 'product_cat')) wp_insert_term($name, 'product_cat', ['slug'=>$slug]);
+    }
+  }
+  public function product_fields() {
+    echo '<div class="options_group">';
+    woocommerce_wp_checkbox(['id'=>'_okoume_enabled','label'=>'Produit OKOUMÉ','description'=>'Afficher dans le catalogue PWA OKOUMÉ.']);
+    woocommerce_wp_select(['id'=>'_okoume_condition','label'=>'État','options'=>[''=>'— Sélectionner —','neuf'=>'Neuf','comme-neuf'=>'Comme neuf','tres-bon-etat'=>'Très bon état','bon-etat'=>'Bon état','reconditionne'=>'Reconditionné']]);
+    $labels=['storage'=>'Stockage','color'=>'Couleur','battery'=>'Batterie','warranty'=>'Garantie','accessories'=>'Accessoires inclus','technical_controls'=>'Contrôles techniques','defects'=>'Défauts éventuels'];
+    foreach ($labels as $key=>$label) woocommerce_wp_text_input(['id'=>'_okoume_'.$key,'label'=>$label]);
+    echo '</div>';
+  }
+  public function save_product_fields($id) {
+    update_post_meta($id, '_okoume_enabled', isset($_POST['_okoume_enabled']) ? 'yes' : 'no');
+    foreach (array_merge(['condition'], self::META) as $key) if (isset($_POST['_okoume_'.$key])) update_post_meta($id, '_okoume_'.$key, sanitize_text_field(wp_unslash($_POST['_okoume_'.$key])));
+  }
+  private function product($product) {
+    $images=[]; foreach (array_slice(array_filter(array_unique([$product->get_image_id(), ...$product->get_gallery_image_ids()])),0,10) as $id) $images[]=['id'=>$id,'src'=>wp_get_attachment_image_url($id,'large'),'alt'=>get_post_meta($id,'_wp_attachment_image_alt',true)];
+    $meta=[]; foreach (self::META as $key) $meta[$key]=get_post_meta($product->get_id(), '_okoume_'.$key, true);
+    $condition=get_post_meta($product->get_id(), '_okoume_condition', true);
+    return ['id'=>$product->get_id(),'name'=>$product->get_name(),'slug'=>$product->get_slug(),'price'=>(float)$product->get_price(),'regular_price'=>(float)$product->get_regular_price(),'sale_price'=>(float)$product->get_sale_price(),'description'=>wp_kses_post($product->get_description()),'short_description'=>wp_kses_post($product->get_short_description()),'stock_status'=>$product->get_stock_status(),'stock_quantity'=>$product->get_manage_stock()?$product->get_stock_quantity():null,'categories'=>array_map(fn($c)=>['id'=>$c->term_id,'slug'=>$c->slug,'name'=>$c->name], get_the_terms($product->get_id(),'product_cat') ?: []),'images'=>$images,'condition'=>$condition,'meta'=>$meta];
+  }
+  public function routes() {
+    register_rest_route('okoume/v1','/products',[['methods'=>'GET','callback'=>[$this,'products'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/products/(?P<id>\d+)',[['methods'=>'GET','callback'=>[$this,'one_product'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/auth/(?P<action>login|register|logout)',[['methods'=>'POST','callback'=>[$this,'auth'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/account',[['methods'=>'GET','callback'=>[$this,'account'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/orders',[['methods'=>'GET','callback'=>[$this,'orders'],'permission_callback'=>'__return_true'],['methods'=>'POST','callback'=>[$this,'checkout'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/chat',[['methods'=>'POST','callback'=>[$this,'chat'],'permission_callback'=>'__return_true']]);
+  }
+  public function products($request) {
+    $args=['status'=>'publish','limit'=>50,'meta_key'=>'_okoume_enabled','meta_value'=>'yes'];
+    if ($request['category']) $args['category']=sanitize_title($request['category']);
+    return rest_ensure_response(array_map([$this,'product'], wc_get_products($args)));
+  }
+  public function one_product($request) { $p=wc_get_product((int)$request['id']); return $p && $p->get_meta('_okoume_enabled')==='yes' ? rest_ensure_response($this->product($p)) : new WP_Error('not_found','Produit introuvable',['status'=>404]); }
+  private function token($user_id) { $exp=time()+DAY_IN_SECONDS*14; return base64_encode($user_id.'|'.$exp.'|'.hash_hmac('sha256',$user_id.'|'.$exp,wp_salt('auth'))); }
+  private function user() { $raw=isset($_COOKIE[self::COOKIE])?base64_decode(sanitize_text_field(wp_unslash($_COOKIE[self::COOKIE]))):''; [$id,$exp,$sig]=array_pad(explode('|',$raw),3,''); if (!$id || $exp<time() || !hash_equals(hash_hmac('sha256',$id.'|'.$exp,wp_salt('auth')),$sig)) return false; return get_user_by('id',(int)$id); }
+  private function session($user) { setcookie(self::COOKIE,$this->token($user->ID),['expires'=>time()+DAY_IN_SECONDS*14,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['id'=>$user->ID,'email'=>$user->user_email,'first_name'=>$user->first_name,'last_name'=>$user->last_name]; }
+  private function attempts_key($email) { return 'okoume_auth_'.md5(($_SERVER['REMOTE_ADDR'] ?? '').'|'.$email); }
+  private function locked($email) { return (int)get_transient($this->attempts_key($email)) >= 5; }
+  private function failed($email) { $key=$this->attempts_key($email); set_transient($key,(int)get_transient($key)+1,15*MINUTE_IN_SECONDS); }
+  public function auth($request) {
+    $action=$request['action']; if ($action==='logout') { setcookie(self::COOKIE,'',['expires'=>time()-3600,'path'=>'/']); return ['ok'=>true]; }
+    $email=sanitize_email($request->get_param('email')); $password=(string)$request->get_param('password'); if (!$email || strlen($password)<8) return new WP_Error('invalid_input','E-mail et mot de passe valide requis.',['status'=>400]); if ($this->locked($email)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans 15 minutes.',['status'=>429]);
+    if ($action==='register') { if (email_exists($email)) { $this->failed($email); return new WP_Error('exists','Un compte existe déjà pour cet e-mail.',['status'=>409]); } $id=wp_create_user($email,$password,$email); if (is_wp_error($id)) return $id; wp_update_user(['ID'=>$id,'first_name'=>sanitize_text_field($request->get_param('first_name')),'last_name'=>sanitize_text_field($request->get_param('last_name')),'role'=>'customer']); $user=get_user_by('id',$id); }
+    else { $user=wp_authenticate($email,$password); if (is_wp_error($user)) { $this->failed($email); return new WP_Error('invalid_login','Identifiants incorrects.',['status'=>401]); } }
+    delete_transient($this->attempts_key($email));
+    return $this->session($user);
+  }
+  public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u); }
+  public function orders() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $orders=wc_get_orders(['customer_id'=>$u->ID,'limit'=>30,'orderby'=>'date','order'=>'DESC']); return array_map(fn($o)=>['id'=>$o->get_id(),'number'=>$o->get_order_number(),'status'=>$o->get_status(),'total'=>$o->get_total(),'date'=>$o->get_date_created()->date('c'),'items'=>array_map(fn($i)=>['name'=>$i->get_name(),'quantity'=>$i->get_quantity()],$o->get_items())],$orders); }
+  public function chat($request) {
+    $message=sanitize_textarea_field($request->get_param('message')); $email=sanitize_email($request->get_param('email'));
+    if (mb_strlen($message)<2) return new WP_Error('invalid_message','Veuillez préciser votre question.',['status'=>400]);
+    $text=mb_strtolower($message);
+    if (str_contains($text,'livraison') || str_contains($text,'retrait')) return ['answer'=>'Nous livrons à Libreville, Akanda et Owendo. Le retrait OKOUMÉ est également disponible lors de la commande.'];
+    if (str_contains($text,'garantie')) return ['answer'=>'La durée de garantie est indiquée sur chaque fiche produit. Nos appareils d’occasion sont présentés avec leurs contrôles et éventuels défauts visibles.'];
+    foreach (wc_get_products(['status'=>'publish','limit'=>50,'meta_key'=>'_okoume_enabled','meta_value'=>'yes']) as $product) {
+      $name=mb_strtolower($product->get_name()); $words=array_filter(explode(' ',preg_replace('/[^\p{L}\p{N}]+/u',' ',$name)));
+      if (count(array_intersect($words,explode(' ',preg_replace('/[^\p{L}\p{N}]+/u',' ',$text))))>=2) return ['answer'=>$product->get_name().' est actuellement proposé à '.wc_price($product->get_price()).'. '.($product->is_in_stock()?'Il est en stock.':'Il n’est plus disponible.')];
+    }
+    $key='okoume_chat_'.md5($_SERVER['REMOTE_ADDR'] ?? ''); if ((int)get_transient($key)>=3) return ['answer'=>'Votre demande a déjà été transmise. Notre équipe reviendra vers vous dès que possible.','fallback'=>true];
+    $body="Question : {$message}\nE-mail client : ".($email ?: 'Non renseigné')."\nPage : ".esc_url_raw(wp_get_referer() ?: 'PWA OKOUMÉ');
+    $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] Demande chatbot à traiter',$body,['Content-Type: text/plain; charset=UTF-8']);
+    if ($sent) { set_transient($key,1+(int)get_transient($key),30*MINUTE_IN_SECONDS); return ['answer'=>'Je n’ai pas encore la réponse. Votre demande a été envoyée à notre équipe : elle vous répondra dès que possible.','fallback'=>true]; }
+    return ['answer'=>'Je n’ai pas encore la réponse. Vous pouvez nous écrire directement sur WhatsApp au 077 638 864.','fallback'=>true];
+  }
+  public function checkout($request) {
+    $items=$request->get_param('items'); $billing=(array)$request->get_param('billing'); if (!is_array($items)||!count($items)||empty($billing['phone'])) return new WP_Error('invalid_order','Panier et téléphone requis.',['status'=>400]);
+    $u=$this->user(); $order=wc_create_order(['customer_id'=>$u?$u->ID:0]); foreach ($items as $line) { $p=wc_get_product((int)($line['id']??0)); $qty=max(1,(int)($line['quantity']??1)); if (!$p||$p->get_meta('_okoume_enabled')!=='yes'||!$p->is_in_stock()) return new WP_Error('unavailable','Un produit du panier n’est plus disponible.',['status'=>409]); $order->add_product($p,$qty); }
+    $clean=[]; foreach (['first_name','last_name','email','phone','address_1','city'] as $key) $clean[$key]=sanitize_text_field($billing[$key]??''); $order->set_address($clean,'billing'); $order->set_address($clean,'shipping'); $order->set_payment_method('cod'); $order->set_payment_method_title('Paiement à la livraison'); $order->calculate_totals(); $order->update_status('on-hold','Commande créée depuis le PWA OKOUMÉ.');
+    return ['id'=>$order->get_id(),'number'=>$order->get_order_number(),'status'=>$order->get_status(),'total'=>$order->get_total()];
+  }
+}
+new Okoume_Headless_Commerce();
