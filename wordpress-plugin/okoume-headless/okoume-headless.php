@@ -44,7 +44,7 @@ final class Okoume_Headless_Commerce {
     register_rest_route('okoume/v1','/auth/(?P<action>login|register|logout)',[['methods'=>'POST','callback'=>[$this,'auth'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/account',[['methods'=>'GET','callback'=>[$this,'account'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/orders',[['methods'=>'GET','callback'=>[$this,'orders'],'permission_callback'=>'__return_true'],['methods'=>'POST','callback'=>[$this,'checkout'],'permission_callback'=>'__return_true']]);
-    register_rest_route('okoume/v1','/orders/track',[['methods'=>'POST','callback'=>[$this,'track_order'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/orders/track',[['methods'=>'GET','callback'=>[$this,'track_order'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/chat',[['methods'=>'POST','callback'=>[$this,'chat'],'permission_callback'=>'__return_true']]);
   }
   public function products($request) {
@@ -69,14 +69,22 @@ final class Okoume_Headless_Commerce {
   }
   public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u); }
   public function orders() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $orders=wc_get_orders(['customer_id'=>$u->ID,'limit'=>30,'orderby'=>'date','order'=>'DESC']); return array_map(fn($o)=>['id'=>$o->get_id(),'number'=>$o->get_order_number(),'status'=>$o->get_status(),'total'=>$o->get_total(),'date'=>$o->get_date_created()->date('c'),'items'=>array_map(fn($i)=>['name'=>$i->get_name(),'quantity'=>$i->get_quantity()],$o->get_items())],$orders); }
+  private function tracking_code($order) {
+    $code=$order->get_meta('_okoume_tracking_code');
+    if (!$code) { $code='OZ-'.str_pad((string)$order->get_id(),6,'0',STR_PAD_LEFT).'-GA-'.wp_rand(100000,999999); $order->update_meta_data('_okoume_tracking_code',$code); $order->save(); }
+    return $code;
+  }
   public function track_order($request) {
-    $number=preg_replace('/\D+/', '', sanitize_text_field($request->get_param('number')));
+    $reference=strtoupper(sanitize_text_field($request->get_param('number')));
     $phone=preg_replace('/\D+/', '', sanitize_text_field($request->get_param('phone')));
-    if (!$number || strlen($phone)<6) return new WP_Error('invalid_tracking','Référence et numéro de téléphone requis.',['status'=>400]);
-    $order=wc_get_order((int)$number);
-    if (!$order || !hash_equals(substr(preg_replace('/\D+/', '', $order->get_billing_phone()), -8), substr($phone, -8))) return new WP_Error('not_found','Aucune commande ne correspond à ces informations.',['status'=>404]);
+    if (!$reference) return new WP_Error('invalid_tracking','Référence de commande requise.',['status'=>400]);
+    $matches=wc_get_orders(['limit'=>1,'meta_key'=>'_okoume_tracking_code','meta_value'=>$reference]);
+    $order=$matches ? $matches[0] : null;
+    if (!$order && ctype_digit($reference)) $order=wc_get_order((int)$reference);
+    if (!$order) return new WP_Error('not_found','Aucune commande ne correspond à cette référence.',['status'=>404]);
+    if (ctype_digit($reference) && (strlen($phone)<6 || !hash_equals(substr(preg_replace('/\D+/', '', $order->get_billing_phone()), -8), substr($phone, -8)))) return new WP_Error('not_found','Pour une ancienne référence, saisissez également le téléphone de commande.',['status'=>404]);
     $labels=['pending'=>'En attente de paiement','on-hold'=>'Commande reçue — en attente de confirmation','processing'=>'En préparation','completed'=>'Terminée','cancelled'=>'Annulée','failed'=>'Échec de la commande','refunded'=>'Remboursée'];
-    return ['number'=>$order->get_order_number(),'status'=>$order->get_status(),'status_label'=>$labels[$order->get_status()] ?? 'Commande reçue','updated'=>$order->get_date_modified()->date('c'),'items'=>array_map(fn($i)=>['name'=>wp_strip_all_tags($i->get_name()),'quantity'=>$i->get_quantity()],$order->get_items())];
+    return ['number'=>$this->tracking_code($order),'status'=>$order->get_status(),'status_label'=>$labels[$order->get_status()] ?? 'Commande reçue','updated'=>$order->get_date_modified()->date('c'),'items'=>array_map(fn($i)=>['name'=>wp_strip_all_tags($i->get_name()),'quantity'=>$i->get_quantity()],$order->get_items())];
   }
   public function chat($request) {
     $message=sanitize_textarea_field($request->get_param('message')); $email=sanitize_email($request->get_param('email'));
@@ -98,7 +106,7 @@ final class Okoume_Headless_Commerce {
     $items=$request->get_param('items'); $billing=(array)$request->get_param('billing'); if (!is_array($items)||!count($items)||empty($billing['phone'])) return new WP_Error('invalid_order','Panier et téléphone requis.',['status'=>400]);
     $u=$this->user(); $order=wc_create_order(['customer_id'=>$u?$u->ID:0]); foreach ($items as $line) { $p=wc_get_product((int)($line['id']??0)); $qty=max(1,(int)($line['quantity']??1)); if (!$p||$p->get_meta('_okoume_enabled')!=='yes'||!$p->is_in_stock()) return new WP_Error('unavailable','Un produit du panier n’est plus disponible.',['status'=>409]); $order->add_product($p,$qty); }
     $clean=[]; foreach (['first_name','last_name','email','phone','address_1','city'] as $key) $clean[$key]=sanitize_text_field($billing[$key]??''); $order->set_address($clean,'billing'); $order->set_address($clean,'shipping'); $order->set_payment_method('cod'); $order->set_payment_method_title('Paiement à la livraison'); $order->calculate_totals(); $order->update_status('on-hold','Commande créée depuis le PWA OKOUMÉ.');
-    return ['id'=>$order->get_id(),'number'=>$order->get_order_number(),'status'=>$order->get_status(),'total'=>$order->get_total()];
+    return ['id'=>$order->get_id(),'number'=>$this->tracking_code($order),'status'=>$order->get_status(),'total'=>$order->get_total()];
   }
 }
 new Okoume_Headless_Commerce();
