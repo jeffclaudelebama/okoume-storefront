@@ -90,7 +90,7 @@ final class Okoume_Headless_Commerce {
     $message=sanitize_textarea_field($request->get_param('message')); $email=sanitize_email($request->get_param('email'));
     if (mb_strlen($message)<2) return new WP_Error('invalid_message','Veuillez préciser votre question.',['status'=>400]);
     $text=mb_strtolower($message);
-    if (str_contains($text,'livraison') || str_contains($text,'retrait')) return ['answer'=>'Nous livrons à Libreville, Akanda et Owendo. Le retrait OKOUMÉ est également disponible lors de la commande.'];
+    if (str_contains($text,'livraison') || str_contains($text,'retrait')) return ['answer'=>'La livraison à domicile coûte 2 000 FCFA. Le retrait OKOUMÉ est gratuit lors de la commande.'];
     if (str_contains($text,'garantie')) return ['answer'=>'La durée de garantie est indiquée sur chaque fiche produit. Nos appareils d’occasion sont présentés avec leurs contrôles et éventuels défauts visibles.'];
     foreach (wc_get_products(['status'=>'publish','limit'=>50,'meta_key'=>'_okoume_enabled','meta_value'=>'yes']) as $product) {
       $name=mb_strtolower($product->get_name()); $words=array_filter(explode(' ',preg_replace('/[^\p{L}\p{N}]+/u',' ',$name)));
@@ -105,7 +105,7 @@ final class Okoume_Headless_Commerce {
   public function checkout($request) {
     $items=$request->get_param('items'); $billing=(array)$request->get_param('billing'); if (!is_array($items)||!count($items)||empty($billing['phone'])) return new WP_Error('invalid_order','Panier et téléphone requis.',['status'=>400]);
     $u=$this->user(); $order=wc_create_order(['customer_id'=>$u?$u->ID:0]); foreach ($items as $line) { $p=wc_get_product((int)($line['id']??0)); $qty=max(1,(int)($line['quantity']??1)); if (!$p||$p->get_meta('_okoume_enabled')!=='yes'||!$p->is_in_stock()) return new WP_Error('unavailable','Un produit du panier n’est plus disponible.',['status'=>409]); $order->add_product($p,$qty); }
-    $clean=[]; foreach (['first_name','last_name','email','phone','address_1','city'] as $key) $clean[$key]=sanitize_text_field($billing[$key]??''); $order->set_address($clean,'billing'); $order->set_address($clean,'shipping'); $order->set_payment_method('cod'); $order->set_payment_method_title('Paiement à la livraison'); $order->calculate_totals(); $order->update_status('on-hold','Commande créée depuis le PWA OKOUMÉ.');
+    $clean=[]; foreach (['first_name','last_name','email','phone','address_1','city'] as $key) $clean[$key]=sanitize_text_field($billing[$key]??''); $order->set_address($clean,'billing'); $order->set_address($clean,'shipping'); $delivery_method=sanitize_key($request->get_param('delivery_method')); if ($delivery_method==='home') { $shipping=new WC_Order_Item_Shipping(); $shipping->set_method_title('Livraison à domicile'); $shipping->set_method_id('okoume_home_delivery'); $shipping->set_total(2000); $order->add_item($shipping); } $order->set_payment_method('cod'); $order->set_payment_method_title('Paiement à la livraison'); $order->calculate_totals(); $order->update_status('on-hold','Commande créée depuis le PWA OKOUMÉ.');
     return ['id'=>$order->get_id(),'number'=>$this->tracking_code($order),'status'=>$order->get_status(),'total'=>$order->get_total()];
   }
 }
