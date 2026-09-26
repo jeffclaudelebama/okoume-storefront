@@ -44,6 +44,7 @@ final class Okoume_Headless_Commerce {
     register_rest_route('okoume/v1','/auth/(?P<action>login|register|logout)',[['methods'=>'POST','callback'=>[$this,'auth'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/account',[['methods'=>'GET','callback'=>[$this,'account'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/orders',[['methods'=>'GET','callback'=>[$this,'orders'],'permission_callback'=>'__return_true'],['methods'=>'POST','callback'=>[$this,'checkout'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/orders/track',[['methods'=>'POST','callback'=>[$this,'track_order'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/chat',[['methods'=>'POST','callback'=>[$this,'chat'],'permission_callback'=>'__return_true']]);
   }
   public function products($request) {
@@ -68,6 +69,15 @@ final class Okoume_Headless_Commerce {
   }
   public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u); }
   public function orders() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $orders=wc_get_orders(['customer_id'=>$u->ID,'limit'=>30,'orderby'=>'date','order'=>'DESC']); return array_map(fn($o)=>['id'=>$o->get_id(),'number'=>$o->get_order_number(),'status'=>$o->get_status(),'total'=>$o->get_total(),'date'=>$o->get_date_created()->date('c'),'items'=>array_map(fn($i)=>['name'=>$i->get_name(),'quantity'=>$i->get_quantity()],$o->get_items())],$orders); }
+  public function track_order($request) {
+    $number=preg_replace('/\D+/', '', sanitize_text_field($request->get_param('number')));
+    $phone=preg_replace('/\D+/', '', sanitize_text_field($request->get_param('phone')));
+    if (!$number || strlen($phone)<6) return new WP_Error('invalid_tracking','Référence et numéro de téléphone requis.',['status'=>400]);
+    $order=wc_get_order((int)$number);
+    if (!$order || !hash_equals(substr(preg_replace('/\D+/', '', $order->get_billing_phone()), -8), substr($phone, -8))) return new WP_Error('not_found','Aucune commande ne correspond à ces informations.',['status'=>404]);
+    $labels=['pending'=>'En attente de paiement','on-hold'=>'Commande reçue — en attente de confirmation','processing'=>'En préparation','completed'=>'Terminée','cancelled'=>'Annulée','failed'=>'Échec de la commande','refunded'=>'Remboursée'];
+    return ['number'=>$order->get_order_number(),'status'=>$order->get_status(),'status_label'=>$labels[$order->get_status()] ?? 'Commande reçue','updated'=>$order->get_date_modified()->date('c'),'items'=>array_map(fn($i)=>['name'=>wp_strip_all_tags($i->get_name()),'quantity'=>$i->get_quantity()],$order->get_items())];
+  }
   public function chat($request) {
     $message=sanitize_textarea_field($request->get_param('message')); $email=sanitize_email($request->get_param('email'));
     if (mb_strlen($message)<2) return new WP_Error('invalid_message','Veuillez préciser votre question.',['status'=>400]);
