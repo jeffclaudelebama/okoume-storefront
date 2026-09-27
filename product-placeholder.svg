@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900" role="img" aria-label="Visuel produit OKOUMÉ en attente">
+  <rect width="900" height="900" fill="#f5f7f9"/>
+  <rect x="275" y="180" width="350" height="450" rx="24" fill="#101827"/>
+  <rect x="300" y="205" width="300" height="350" rx="10" fill="#e7ebef"/>
+  <circle cx="450" cy="590" r="14" fill="#ef5a36"/>
+  <text x="450" y="710" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="700" fill="#101827">OKOUMÉ</text>
+  <text x="450" y="750" text-anchor="middle" font-family="Arial,sans-serif" font-size="19" fill="#667085">Visuel du produit en attente</text>
+</svg>
