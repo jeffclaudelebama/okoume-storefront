@@ -93,7 +93,7 @@ final class Okoume_Headless_Commerce {
   }
   public function contact($request) {
     $name=sanitize_text_field($request->get_param('name')); $email=sanitize_email($request->get_param('email')); $subject=sanitize_text_field($request->get_param('subject')); $message=sanitize_textarea_field($request->get_param('message'));
-    if (!$name || !$email || mb_strlen($message)<10) return new WP_Error('invalid_contact','Indiquez votre nom, un e-mail valide et un message d’au moins 10 caractères.',['status'=>400]);
+    if (!$name || !$email || !$subject || mb_strlen($message)<10) return new WP_Error('invalid_contact','Indiquez votre nom, un e-mail valide, un objet et un message d’au moins 10 caractères.',['status'=>400]);
     if (!$this->intake_allowed('contact')) return new WP_Error('rate_limited','Veuillez patienter avant d’envoyer un autre message.',['status'=>429]);
     $saved=$this->save_message('contact',$name,$email,"Objet : {$subject}\n\n{$message}");
     $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] '.($subject ?: 'Nouveau message'),"Nom : {$name}\nE-mail : {$email}\n\n{$message}",['Content-Type: text/plain; charset=UTF-8','Reply-To: '.$email]);
@@ -111,12 +111,13 @@ final class Okoume_Headless_Commerce {
   public function auth($request) {
     $action=$request['action']; if ($action==='logout') { setcookie(self::COOKIE,'',['expires'=>time()-3600,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['ok'=>true]; }
     $phone=$this->phone($request->get_param('phone')); $email=sanitize_email($request->get_param('email')); $password=(string)$request->get_param('password'); $attempt_key=$phone ?: $email;
-    if (strlen($phone)<8 || strlen($phone)>15 || ($action==='register' && (!$email || strlen($password)<12)) || ($action==='login' && !$password)) return new WP_Error('invalid_input',$action==='register'?'Renseignez un téléphone valide, un e-mail et un mot de passe de 12 caractères minimum.':'Téléphone et mot de passe requis.',['status'=>400]);
+    $first_name=sanitize_text_field($request->get_param('first_name')); $last_name=sanitize_text_field($request->get_param('last_name')); $address=sanitize_text_field($request->get_param('address')); $password_confirmation=(string)$request->get_param('password_confirmation');
+    if (strlen($phone)<8 || strlen($phone)>15 || ($action==='register' && (!$email || !$first_name || !$last_name || !$address || strlen($password)<12 || $password!==$password_confirmation)) || ($action==='login' && !$password)) return new WP_Error('invalid_input',$action==='register'?'Renseignez tous les champs, avec un téléphone valide et deux mots de passe identiques de 12 caractères minimum.':'Téléphone et mot de passe requis.',['status'=>400]);
     if ($this->locked($attempt_key)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans 15 minutes.',['status'=>429]);
     if ($action==='register') {
       if (email_exists($email) || $this->user_by_phone($phone)) { $this->failed($attempt_key); return new WP_Error('registration_unavailable','Impossible de créer ce compte avec ces informations.',['status'=>409]); }
       $login='okoume_'.substr($phone,-12); $id=wp_create_user($login,$password,$email); if (is_wp_error($id)) return new WP_Error('registration_unavailable','Impossible de créer ce compte avec ces informations.',['status'=>400]);
-      wp_update_user(['ID'=>$id,'first_name'=>sanitize_text_field($request->get_param('first_name')),'last_name'=>sanitize_text_field($request->get_param('last_name')),'role'=>'customer']); update_user_meta($id,'_okoume_phone',$phone); update_user_meta($id,'_okoume_address',sanitize_text_field($request->get_param('address'))); $user=get_user_by('id',$id);
+      wp_update_user(['ID'=>$id,'first_name'=>$first_name,'last_name'=>$last_name,'role'=>'customer']); update_user_meta($id,'_okoume_phone',$phone); update_user_meta($id,'_okoume_address',$address); $user=get_user_by('id',$id);
     } else {
       $user=$this->user_by_phone($phone); if (!$user || !wp_check_password($password,$user->user_pass,$user->ID)) { $this->failed($attempt_key); return new WP_Error('invalid_login','Identifiants incorrects.',['status'=>401]); }
     }

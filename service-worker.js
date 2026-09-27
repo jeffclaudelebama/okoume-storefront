@@ -1,4 +1,4 @@
-const CACHE='okoume-v1';
+const CACHE='okoume-v2';
 const ASSETS=['/','/index.html','/app.js','/styles.css','/gallery.css','/trust.css','/commerce.css','/manifest.webmanifest','/icon.svg'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
