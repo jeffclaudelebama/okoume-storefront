@@ -19,6 +19,16 @@ final class Okoume_Headless_Commerce {
     foreach (['smartphones'=>'Smartphones','ordinateurs'=>'Ordinateurs','tablettes'=>'Tablettes','gaming'=>'Gaming','accessoires'=>'Accessoires'] as $slug=>$name) {
       if (!term_exists($slug, 'product_cat')) wp_insert_term($name, 'product_cat', ['slug'=>$slug]);
     }
+    register_post_type('okoume_restock_request', [
+      'labels'=>['name'=>'Alertes de disponibilité','singular_name'=>'Alerte de disponibilité'],
+      'public'=>false,'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title'],
+      'capability_type'=>'post','map_meta_cap'=>true,
+    ]);
+    register_post_type('okoume_contact_message', [
+      'labels'=>['name'=>'Messages clients','singular_name'=>'Message client'],
+      'public'=>false,'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title','editor'],
+      'capability_type'=>'post','map_meta_cap'=>true,
+    ]);
   }
   public function product_fields() {
     echo '<div class="options_group">';
@@ -47,6 +57,8 @@ final class Okoume_Headless_Commerce {
     register_rest_route('okoume/v1','/orders/track',[['methods'=>'GET','callback'=>[$this,'track_order'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/stripe/return',[['methods'=>'GET','callback'=>[$this,'stripe_return'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/stripe/webhook',[['methods'=>'POST','callback'=>[$this,'stripe_webhook'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/restock',[['methods'=>'POST','callback'=>[$this,'restock'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/contact',[['methods'=>'POST','callback'=>[$this,'contact'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/chat',[['methods'=>'POST','callback'=>[$this,'chat'],'permission_callback'=>'__return_true']]);
   }
   public function products($request) {
@@ -55,6 +67,41 @@ final class Okoume_Headless_Commerce {
     return rest_ensure_response(array_map([$this,'product'], wc_get_products($args)));
   }
   public function one_product($request) { $p=wc_get_product((int)$request['id']); return $p && $p->get_meta('_okoume_enabled')==='yes' ? rest_ensure_response($this->product($p)) : new WP_Error('not_found','Produit introuvable',['status'=>404]); }
+  public function restock($request) {
+    $product=wc_get_product((int)$request->get_param('product_id'));
+    $phone=preg_replace('/\D+/', '', (string)$request->get_param('phone'));
+    if (!$product || $product->get_meta('_okoume_enabled')!=='yes') return new WP_Error('not_found','Produit introuvable.',['status'=>404]);
+    if ($product->is_in_stock()) return new WP_Error('available','Ce produit est actuellement disponible.',['status'=>409]);
+    if (strlen($phone)<8 || strlen($phone)>15) return new WP_Error('invalid_phone','Saisissez un numéro WhatsApp valide.',['status'=>400]);
+    if (!$this->intake_allowed('restock')) return new WP_Error('rate_limited','Veuillez patienter avant de demander une autre alerte.',['status'=>429]);
+    $id=wp_insert_post(['post_type'=>'okoume_restock_request','post_status'=>'publish','post_title'=>'Alerte — '.$product->get_name().' — '.$phone]);
+    if (is_wp_error($id)) return new WP_Error('save_failed','Impossible d’enregistrer votre demande.',['status'=>500]);
+    update_post_meta($id,'_okoume_product_id',$product->get_id());
+    update_post_meta($id,'_okoume_whatsapp',$phone);
+    return ['ok'=>true,'message'=>'Votre demande a bien été enregistrée. Nous vous écrirons sur WhatsApp dès le retour en stock.'];
+  }
+  private function intake_allowed($scope,$limit=3) {
+    $key='okoume_'.$scope.'_'.md5($_SERVER['REMOTE_ADDR'] ?? '');
+    if ((int)get_transient($key)>=$limit) return false;
+    set_transient($key,1+(int)get_transient($key),30*MINUTE_IN_SECONDS);
+    return true;
+  }
+  private function save_message($type,$name,$email,$message) {
+    $id=wp_insert_post(['post_type'=>'okoume_contact_message','post_status'=>'publish','post_title'=>sprintf('%s — %s',ucfirst($type),$name ?: 'Client'),'post_content'=>$message]);
+    if (!is_wp_error($id)) { update_post_meta($id,'_okoume_message_type',$type); update_post_meta($id,'_okoume_email',$email); }
+    return !is_wp_error($id);
+  }
+  public function contact($request) {
+    $name=sanitize_text_field($request->get_param('name')); $email=sanitize_email($request->get_param('email')); $subject=sanitize_text_field($request->get_param('subject')); $message=sanitize_textarea_field($request->get_param('message'));
+    if (!$name || !$email || mb_strlen($message)<10) return new WP_Error('invalid_contact','Indiquez votre nom, un e-mail valide et un message d’au moins 10 caractères.',['status'=>400]);
+    if (!$this->intake_allowed('contact')) return new WP_Error('rate_limited','Veuillez patienter avant d’envoyer un autre message.',['status'=>429]);
+    $saved=$this->save_message('contact',$name,$email,"Objet : {$subject}\n\n{$message}");
+    $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] '.($subject ?: 'Nouveau message'),"Nom : {$name}\nE-mail : {$email}\n\n{$message}",['Content-Type: text/plain; charset=UTF-8','Reply-To: '.$email]);
+    if (!$saved && !$sent) return new WP_Error('contact_unavailable','Votre message n’a pas pu être enregistré. Réessayez plus tard.',['status'=>503]);
+    return ['ok'=>true,'message'=>'Votre message a bien été transmis à l’équipe OKOUMÉ.'];
+  }
+  private function phone($value) { return preg_replace('/\D+/', '', (string)$value); }
+  private function user_by_phone($phone) { $users=get_users(['number'=>1,'meta_key'=>'_okoume_phone','meta_value'=>$phone,'fields'=>'all']); return $users ? $users[0] : false; }
   private function token($user_id) { $exp=time()+DAY_IN_SECONDS*14; return base64_encode($user_id.'|'.$exp.'|'.hash_hmac('sha256',$user_id.'|'.$exp,wp_salt('auth'))); }
   private function user() { $raw=isset($_COOKIE[self::COOKIE])?base64_decode(sanitize_text_field(wp_unslash($_COOKIE[self::COOKIE]))):''; [$id,$exp,$sig]=array_pad(explode('|',$raw),3,''); if (!$id || $exp<time() || !hash_equals(hash_hmac('sha256',$id.'|'.$exp,wp_salt('auth')),$sig)) return false; return get_user_by('id',(int)$id); }
   private function session($user) { setcookie(self::COOKIE,$this->token($user->ID),['expires'=>time()+DAY_IN_SECONDS*14,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['id'=>$user->ID,'email'=>$user->user_email,'first_name'=>$user->first_name,'last_name'=>$user->last_name]; }
@@ -62,12 +109,18 @@ final class Okoume_Headless_Commerce {
   private function locked($email) { return (int)get_transient($this->attempts_key($email)) >= 5; }
   private function failed($email) { $key=$this->attempts_key($email); set_transient($key,(int)get_transient($key)+1,15*MINUTE_IN_SECONDS); }
   public function auth($request) {
-    $action=$request['action']; if ($action==='logout') { setcookie(self::COOKIE,'',['expires'=>time()-3600,'path'=>'/']); return ['ok'=>true]; }
-    $email=sanitize_email($request->get_param('email')); $password=(string)$request->get_param('password'); if (!$email || strlen($password)<8) return new WP_Error('invalid_input','E-mail et mot de passe valide requis.',['status'=>400]); if ($this->locked($email)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans 15 minutes.',['status'=>429]);
-    if ($action==='register') { if (email_exists($email)) { $this->failed($email); return new WP_Error('exists','Un compte existe déjà pour cet e-mail.',['status'=>409]); } $id=wp_create_user($email,$password,$email); if (is_wp_error($id)) return $id; wp_update_user(['ID'=>$id,'first_name'=>sanitize_text_field($request->get_param('first_name')),'last_name'=>sanitize_text_field($request->get_param('last_name')),'role'=>'customer']); $user=get_user_by('id',$id); }
-    else { $user=wp_authenticate($email,$password); if (is_wp_error($user)) { $this->failed($email); return new WP_Error('invalid_login','Identifiants incorrects.',['status'=>401]); } }
-    delete_transient($this->attempts_key($email));
-    return $this->session($user);
+    $action=$request['action']; if ($action==='logout') { setcookie(self::COOKIE,'',['expires'=>time()-3600,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['ok'=>true]; }
+    $phone=$this->phone($request->get_param('phone')); $email=sanitize_email($request->get_param('email')); $password=(string)$request->get_param('password'); $attempt_key=$phone ?: $email;
+    if (strlen($phone)<8 || strlen($phone)>15 || ($action==='register' && (!$email || strlen($password)<12)) || ($action==='login' && !$password)) return new WP_Error('invalid_input',$action==='register'?'Renseignez un téléphone valide, un e-mail et un mot de passe de 12 caractères minimum.':'Téléphone et mot de passe requis.',['status'=>400]);
+    if ($this->locked($attempt_key)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans 15 minutes.',['status'=>429]);
+    if ($action==='register') {
+      if (email_exists($email) || $this->user_by_phone($phone)) { $this->failed($attempt_key); return new WP_Error('registration_unavailable','Impossible de créer ce compte avec ces informations.',['status'=>409]); }
+      $login='okoume_'.substr($phone,-12); $id=wp_create_user($login,$password,$email); if (is_wp_error($id)) return new WP_Error('registration_unavailable','Impossible de créer ce compte avec ces informations.',['status'=>400]);
+      wp_update_user(['ID'=>$id,'first_name'=>sanitize_text_field($request->get_param('first_name')),'last_name'=>sanitize_text_field($request->get_param('last_name')),'role'=>'customer']); update_user_meta($id,'_okoume_phone',$phone); update_user_meta($id,'_okoume_address',sanitize_text_field($request->get_param('address'))); $user=get_user_by('id',$id);
+    } else {
+      $user=$this->user_by_phone($phone); if (!$user || !wp_check_password($password,$user->user_pass,$user->ID)) { $this->failed($attempt_key); return new WP_Error('invalid_login','Identifiants incorrects.',['status'=>401]); }
+    }
+    delete_transient($this->attempts_key($attempt_key)); return $this->session($user);
   }
   public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u); }
   public function orders() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $orders=wc_get_orders(['customer_id'=>$u->ID,'limit'=>30,'orderby'=>'date','order'=>'DESC']); return array_map(fn($o)=>['id'=>$o->get_id(),'number'=>$o->get_order_number(),'status'=>$o->get_status(),'total'=>$o->get_total(),'date'=>$o->get_date_created()->date('c'),'items'=>array_map(fn($i)=>['name'=>$i->get_name(),'quantity'=>$i->get_quantity()],$o->get_items())],$orders); }
@@ -98,11 +151,12 @@ final class Okoume_Headless_Commerce {
       $name=mb_strtolower($product->get_name()); $words=array_filter(explode(' ',preg_replace('/[^\p{L}\p{N}]+/u',' ',$name)));
       if (count(array_intersect($words,explode(' ',preg_replace('/[^\p{L}\p{N}]+/u',' ',$text))))>=2) return ['answer'=>$product->get_name().' est actuellement proposé à '.wc_price($product->get_price()).'. '.($product->is_in_stock()?'Il est en stock.':'Il n’est plus disponible.')];
     }
-    $key='okoume_chat_'.md5($_SERVER['REMOTE_ADDR'] ?? ''); if ((int)get_transient($key)>=3) return ['answer'=>'Votre demande a déjà été transmise. Notre équipe reviendra vers vous dès que possible.','fallback'=>true];
+    if (!$this->intake_allowed('chat')) return ['answer'=>'Votre demande a déjà été transmise. Notre équipe reviendra vers vous dès que possible.','fallback'=>true];
     $body="Question : {$message}\nE-mail client : ".($email ?: 'Non renseigné')."\nPage : ".esc_url_raw(wp_get_referer() ?: 'PWA OKOUMÉ');
+    $saved=$this->save_message('chat','',$email,$body);
     $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] Demande chatbot à traiter',$body,['Content-Type: text/plain; charset=UTF-8']);
-    if ($sent) { set_transient($key,1+(int)get_transient($key),30*MINUTE_IN_SECONDS); return ['answer'=>'Je n’ai pas encore la réponse. Votre demande a été envoyée à notre équipe : elle vous répondra dès que possible.','fallback'=>true]; }
-    return ['answer'=>'Je n’ai pas encore la réponse. Vous pouvez nous écrire directement sur WhatsApp au 077 638 864.','fallback'=>true];
+    if ($saved || $sent) return ['answer'=>'Je n’ai pas encore la réponse. Votre demande a été transmise à notre équipe : elle vous répondra dès que possible.','fallback'=>true];
+    return new WP_Error('chat_unavailable','Le service de messagerie est momentanément indisponible.',['status'=>503]);
   }
   private function stripe_checkout_session($order) {
     if (!class_exists('WC_Stripe_API') || !class_exists('WC_Stripe_Helper')) throw new Exception('Le paiement par carte est momentanément indisponible.');
