@@ -156,7 +156,8 @@ final class Okoume_Headless_Commerce {
     if (!$this->intake_allowed('chat')) return ['answer'=>'Votre demande a déjà été transmise. Notre équipe reviendra vers vous dès que possible.','fallback'=>true];
     $body="Question : {$message}\nE-mail client : ".($email ?: 'Non renseigné')."\nPage : ".esc_url_raw(wp_get_referer() ?: 'PWA OKOUMÉ');
     $saved=$this->save_message('chat','',$email,$body);
-    $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] Demande chatbot à traiter',$body,['Content-Type: text/plain; charset=UTF-8']);
+    $headers=['Content-Type: text/plain; charset=UTF-8']; if ($email) $headers[]='Reply-To: '.$email;
+    $sent=wp_mail('info@find-gabon.com','[OKOUMÉ] Demande chatbot à traiter',$body,$headers);
     if ($saved || $sent) return ['answer'=>'Je n’ai pas encore la réponse. Votre demande a été transmise à notre équipe : elle vous répondra dès que possible.','fallback'=>true];
     return new WP_Error('chat_unavailable','Le service de messagerie est momentanément indisponible.',['status'=>503]);
   }

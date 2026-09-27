@@ -134,6 +134,8 @@ function openAddedToCart(product){document.querySelector('#added-to-cart-modal')
 add=function(id,quantity=1){const product=products.find(item=>item.id===id);if(!product||!product.inStock)return cartNotice('Ce produit n’est plus disponible.');const current=cartQuantity(id);const maximum=availableQuantity(product);const requested=Math.max(1,Number(quantity)||1);if(current+requested>maximum){cartNotice(`Quantité maximale disponible : ${maximum}.`);return}cart.push(...Array(requested).fill(id));save();render();openAddedToCart(product)};
 function mountAvailabilityForProductLayout(){const path=location.hash.slice(1)||'/';if(!path.startsWith('/produit/'))return;const current=products.find(item=>item.id===+path.split('/').pop());const detail=document.querySelector('.purchase-column');if(!current||!detail||current.inStock||detail.querySelector('.restock-box'))return;const status=detail.querySelector('.status');if(status){status.textContent='Indisponible · Alerte de retour disponible';status.classList.add('stock-out-status')}detail.querySelector('.product-quantity')?.remove();const buy=detail.querySelector('button.btn');if(buy)buy.replaceWith(document.createRange().createContextualFragment(restockMarkup(current)))}
 new MutationObserver(mountAvailabilityForProductLayout).observe(document.querySelector('#app'),{childList:true,subtree:true});
+const cartPageWithDirectCheckout=cartPage;
+cartPage=function(){return cartPageWithDirectCheckout().replace('href="#/connexion">Passer la commande','href="#/livraison">Passer la commande')};
 
 /* Navigation stays immediate: skeletons represent missing data, never a blocked page. */
 function closeAddedToCart(){document.querySelector('#added-to-cart-modal')?.remove()}
@@ -163,6 +165,7 @@ function toggleCheckoutProfile(){document.querySelector('#checkout-profile-edit'
 go=function(path){closeAddedToCart();closeAccountModal();originalGo(path);requestAnimationFrame(()=>window.scrollTo(0,0));setTimeout(()=>window.scrollTo(0,0),40)};
 const renderWithAccountAccess=render;
 render=function(){renderWithAccountAccess();mountAccountAccess();requestAnimationFrame(()=>window.scrollTo(0,0))};
+window.addEventListener('hashchange',()=>requestAnimationFrame(()=>window.scrollTo(0,0)));
 refreshAccount();
 function formActionMessage(form,message,type='error'){let result=form.querySelector('.form-action-result');if(!result){form.insertAdjacentHTML('beforeend','<p class="form-result form-action-result" aria-live="polite"></p>');result=form.querySelector('.form-action-result')}result.textContent=message;result.className=`form-result form-action-result ${type}`}
 const phoneAuthWithLocalState=phoneAuth;
