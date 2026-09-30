@@ -7,13 +7,36 @@
 defined('ABSPATH') || exit;
 
 final class Okoume_Headless_Commerce {
-  const COOKIE = 'okoume_session';
+  /* __Host- prevents a sibling subdomain from setting a competing cookie. */
+  const COOKIE = '__Host-okoume_session';
+  const LEGACY_COOKIE = 'okoume_session';
+  const SESSION_TTL = 1209600; // 14 days.
+  const SESSION_ROTATION_SECONDS = 604800; // 7 days.
   const META = ['condition','storage','color','battery','warranty','accessories','technical_controls','defects'];
+  private $session_context = null;
+  private $session_checked = false;
   public function __construct() {
     add_action('init', [$this, 'register_categories']);
     add_action('woocommerce_product_options_general_product_data', [$this, 'product_fields']);
     add_action('woocommerce_process_product_meta', [$this, 'save_product_fields']);
     add_action('rest_api_init', [$this, 'routes']);
+    add_filter('rest_pre_serve_request', [$this, 'cors_headers'], 100, 4);
+    add_filter('rest_endpoints', [$this, 'restrict_public_user_endpoints']);
+    add_filter('user_has_cap', [$this, 'grant_staff_capability'], 10, 4);
+  }
+  private function staff_capabilities() {
+    $cap='okoume_manage_customer_messages';
+    return [
+      'edit_post'=>$cap,'read_post'=>$cap,'delete_post'=>$cap,
+      'edit_posts'=>$cap,'edit_others_posts'=>$cap,'publish_posts'=>$cap,
+      'read_private_posts'=>$cap,'delete_posts'=>$cap,'delete_private_posts'=>$cap,
+      'delete_published_posts'=>$cap,'delete_others_posts'=>$cap,
+      'edit_private_posts'=>$cap,'edit_published_posts'=>$cap,'create_posts'=>$cap,
+    ];
+  }
+  public function grant_staff_capability($allcaps,$caps,$args,$user) {
+    if (in_array('okoume_manage_customer_messages',$caps,true) && (!empty($allcaps['manage_woocommerce']) || !empty($allcaps['manage_options']))) $allcaps['okoume_manage_customer_messages']=true;
+    return $allcaps;
   }
   public function register_categories() {
     foreach (['smartphones'=>'Smartphones','ordinateurs'=>'Ordinateurs','tablettes'=>'Tablettes','gaming'=>'Gaming','accessoires'=>'Accessoires'] as $slug=>$name) {
@@ -21,13 +44,15 @@ final class Okoume_Headless_Commerce {
     }
     register_post_type('okoume_restock_request', [
       'labels'=>['name'=>'Alertes de disponibilité','singular_name'=>'Alerte de disponibilité'],
-      'public'=>false,'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title'],
-      'capability_type'=>'post','map_meta_cap'=>true,
+      'public'=>false,'publicly_queryable'=>false,'exclude_from_search'=>true,'show_in_rest'=>false,
+      'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title'],
+      'capability_type'=>['okoume_restock_request','okoume_restock_requests'],'capabilities'=>$this->staff_capabilities(),'map_meta_cap'=>true,
     ]);
     register_post_type('okoume_contact_message', [
       'labels'=>['name'=>'Messages clients','singular_name'=>'Message client'],
-      'public'=>false,'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title','editor'],
-      'capability_type'=>'post','map_meta_cap'=>true,
+      'public'=>false,'publicly_queryable'=>false,'exclude_from_search'=>true,'show_in_rest'=>false,
+      'show_ui'=>true,'show_in_menu'=>'woocommerce','supports'=>['title','editor'],
+      'capability_type'=>['okoume_contact_message','okoume_contact_messages'],'capabilities'=>$this->staff_capabilities(),'map_meta_cap'=>true,
     ]);
   }
   public function product_fields() {
@@ -61,6 +86,51 @@ final class Okoume_Headless_Commerce {
     register_rest_route('okoume/v1','/contact',[['methods'=>'POST','callback'=>[$this,'contact'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/chat',[['methods'=>'POST','callback'=>[$this,'chat'],'permission_callback'=>'__return_true']]);
   }
+  private function normalise_origin($value) {
+    $parts=wp_parse_url(trim((string)$value));
+    if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) return '';
+    $scheme=strtolower($parts['scheme']);
+    if (!in_array($scheme,['https','http'],true) || isset($parts['user']) || isset($parts['pass'])) return '';
+    return $scheme.'://'.strtolower($parts['host']).(isset($parts['port']) ? ':'.(int)$parts['port'] : '');
+  }
+  private function allowed_origins() {
+    $origins=['https://okoume.find-gabon.com',$this->normalise_origin(home_url('/')),$this->normalise_origin(site_url('/'))];
+    $origins=apply_filters('okoume_allowed_origins',$origins);
+    if (!is_array($origins)) return [];
+    return array_values(array_unique(array_filter(array_map([$this,'normalise_origin'],$origins))));
+  }
+  private function request_origin() { return $this->normalise_origin($_SERVER['HTTP_ORIGIN'] ?? ''); }
+  private function origin_is_allowed($origin) { return $origin && in_array($origin,$this->allowed_origins(),true); }
+  public function cors_headers($served,$result,$request,$server) {
+    if (!($request instanceof WP_REST_Request) || strpos($request->get_route(),'/okoume/v1/')!==0) return $served;
+    header_remove('Access-Control-Allow-Origin'); header_remove('Access-Control-Allow-Credentials'); header_remove('Access-Control-Allow-Headers'); header_remove('Access-Control-Allow-Methods'); header_remove('Access-Control-Expose-Headers');
+    $origin=$this->request_origin();
+    if ($this->origin_is_allowed($origin)) {
+      header('Access-Control-Allow-Origin: '.$origin,true);
+      header('Access-Control-Allow-Credentials: true',true);
+      header('Access-Control-Allow-Methods: GET, POST, OPTIONS',true);
+      header('Access-Control-Allow-Headers: Content-Type, X-Okoume-CSRF',true);
+      header('Access-Control-Expose-Headers: X-OKOUME-CSRF',true);
+      header('Access-Control-Max-Age: 600',true);
+      header('Vary: Origin',false);
+    }
+    $route=$request->get_route();
+    if ($route==='/okoume/v1/account' || $route==='/okoume/v1/orders' || strpos($route,'/okoume/v1/auth/')===0) {
+      header('Cache-Control: private, no-store, max-age=0',true);
+      header('Pragma: no-cache',true);
+    }
+    return $served;
+  }
+  public function restrict_public_user_endpoints($endpoints) {
+    if (current_user_can('list_users')) return $endpoints;
+    unset($endpoints['/wp/v2/users']);
+    foreach (array_keys($endpoints) as $route) if (strpos($route,'/wp/v2/users/(?P<id>')===0) unset($endpoints[$route]);
+    return $endpoints;
+  }
+  private function require_trusted_origin() {
+    if ($this->origin_is_allowed($this->request_origin())) return true;
+    return new WP_Error('invalid_origin','Cette action doit être envoyée depuis le site OKOUMÉ.',['status'=>403]);
+  }
   public function products($request) {
     $args=['status'=>'publish','limit'=>50,'meta_key'=>'_okoume_enabled','meta_value'=>'yes'];
     if ($request['category']) $args['category']=sanitize_title($request['category']);
@@ -74,20 +144,28 @@ final class Okoume_Headless_Commerce {
     if ($product->is_in_stock()) return new WP_Error('available','Ce produit est actuellement disponible.',['status'=>409]);
     if (strlen($phone)<8 || strlen($phone)>15) return new WP_Error('invalid_phone','Saisissez un numéro WhatsApp valide.',['status'=>400]);
     if (!$this->intake_allowed('restock')) return new WP_Error('rate_limited','Veuillez patienter avant de demander une autre alerte.',['status'=>429]);
-    $id=wp_insert_post(['post_type'=>'okoume_restock_request','post_status'=>'publish','post_title'=>'Alerte — '.$product->get_name().' — '.$phone]);
+    $id=wp_insert_post(['post_type'=>'okoume_restock_request','post_status'=>'private','post_title'=>'Alerte — '.$product->get_name().' — '.$phone]);
     if (is_wp_error($id)) return new WP_Error('save_failed','Impossible d’enregistrer votre demande.',['status'=>500]);
     update_post_meta($id,'_okoume_product_id',$product->get_id());
     update_post_meta($id,'_okoume_whatsapp',$phone);
     return ['ok'=>true,'message'=>'Votre demande a bien été enregistrée. Nous vous écrirons sur WhatsApp dès le retour en stock.'];
   }
-  private function intake_allowed($scope,$limit=3) {
-    $key='okoume_'.$scope.'_'.md5($_SERVER['REMOTE_ADDR'] ?? '');
+  private function client_ip() {
+    $ip=isset($_SERVER['REMOTE_ADDR']) ? trim((string)wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+    $ip=apply_filters('okoume_client_ip',$ip);
+    return filter_var($ip,FILTER_VALIDATE_IP) ? $ip : 'unknown';
+  }
+  private function rate_key($scope,$identifier='') {
+    return 'okoume_rate_'.hash_hmac('sha256',$scope.'|'.$this->client_ip().'|'.$identifier,wp_salt('nonce'));
+  }
+  private function intake_allowed($scope,$limit=3,$window=1800,$identifier='') {
+    $key=$this->rate_key($scope,$identifier);
     if ((int)get_transient($key)>=$limit) return false;
-    set_transient($key,1+(int)get_transient($key),30*MINUTE_IN_SECONDS);
+    set_transient($key,1+(int)get_transient($key),(int)$window);
     return true;
   }
   private function save_message($type,$name,$email,$message) {
-    $id=wp_insert_post(['post_type'=>'okoume_contact_message','post_status'=>'publish','post_title'=>sprintf('%s — %s',ucfirst($type),$name ?: 'Client'),'post_content'=>$message]);
+    $id=wp_insert_post(['post_type'=>'okoume_contact_message','post_status'=>'private','post_title'=>sprintf('%s — %s',ucfirst($type),$name ?: 'Client'),'post_content'=>$message]);
     if (!is_wp_error($id)) { update_post_meta($id,'_okoume_message_type',$type); update_post_meta($id,'_okoume_email',$email); }
     return !is_wp_error($id);
   }
@@ -102,17 +180,86 @@ final class Okoume_Headless_Commerce {
   }
   private function phone($value) { return preg_replace('/\D+/', '', (string)$value); }
   private function user_by_phone($phone) { $users=get_users(['number'=>1,'meta_key'=>'_okoume_phone','meta_value'=>$phone,'fields'=>'all']); return $users ? $users[0] : false; }
-  private function token($user_id) { $exp=time()+DAY_IN_SECONDS*14; return base64_encode($user_id.'|'.$exp.'|'.hash_hmac('sha256',$user_id.'|'.$exp,wp_salt('auth'))); }
-  private function user() { $raw=isset($_COOKIE[self::COOKIE])?base64_decode(sanitize_text_field(wp_unslash($_COOKIE[self::COOKIE]))):''; [$id,$exp,$sig]=array_pad(explode('|',$raw),3,''); if (!$id || $exp<time() || !hash_equals(hash_hmac('sha256',$id.'|'.$exp,wp_salt('auth')),$sig)) return false; return get_user_by('id',(int)$id); }
-  private function session($user,$refresh_cookie=true) { if ($refresh_cookie) setcookie(self::COOKIE,$this->token($user->ID),['expires'=>time()+DAY_IN_SECONDS*14,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['id'=>$user->ID,'email'=>$user->user_email,'first_name'=>$user->first_name,'last_name'=>$user->last_name,'phone'=>get_user_meta($user->ID,'_okoume_phone',true),'address'=>get_user_meta($user->ID,'_okoume_address',true),'phone_verified'=>(bool)get_user_meta($user->ID,'_okoume_phone_verified',true)]; }
-  private function attempts_key($email) { return 'okoume_auth_'.md5(($_SERVER['REMOTE_ADDR'] ?? '').'|'.$email); }
-  private function locked($email) { return (int)get_transient($this->attempts_key($email)) >= 5; }
-  private function failed($email) { $key=$this->attempts_key($email); set_transient($key,(int)get_transient($key)+1,15*MINUTE_IN_SECONDS); }
+  private function cookie_options($expires) {
+    return ['expires'=>(int)$expires,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Strict'];
+  }
+  private function clear_legacy_cookie() { setcookie(self::LEGACY_COOKIE,'',$this->cookie_options(time()-HOUR_IN_SECONDS)); }
+  private function clear_session_cookie() {
+    setcookie(self::COOKIE,'',$this->cookie_options(time()-HOUR_IN_SECONDS));
+    /* Remove the former stateless cookie after the upgrade as well. */
+    $this->clear_legacy_cookie();
+  }
+  private function set_session_cookie($user_id,$issued,$token) {
+    setcookie(self::COOKIE,'v1.'.(int)$user_id.'.'.(int)$issued.'.'.$token,$this->cookie_options($issued+self::SESSION_TTL));
+    setcookie(self::LEGACY_COOKIE,'',$this->cookie_options(time()-HOUR_IN_SECONDS));
+  }
+  private function current_session($rotate=true) {
+    if (!$this->session_checked) {
+      $this->session_checked=true;
+      if (isset($_COOKIE[self::LEGACY_COOKIE])) $this->clear_legacy_cookie();
+      $cookie=$_COOKIE[self::COOKIE] ?? '';
+      $raw=is_string($cookie) ? (string)wp_unslash($cookie) : '';
+      if (preg_match('/^v1\.([1-9][0-9]*)\.([0-9]{10})\.([A-Za-z0-9]{20,128})$/',$raw,$matches)) {
+        $user=get_user_by('id',(int)$matches[1]);
+        $issued=(int)$matches[2]; $token=$matches[3];
+        if ($user && $issued<=time()+300 && $issued+self::SESSION_TTL>=time() && class_exists('WP_Session_Tokens')) {
+          $manager=WP_Session_Tokens::get_instance($user->ID);
+          if ($manager->verify($token)) $this->session_context=['user'=>$user,'token'=>$token,'issued'=>$issued,'manager'=>$manager];
+        }
+      }
+      if (!$this->session_context && $raw) $this->clear_session_cookie();
+    }
+    if ($rotate && $this->session_context && time()-$this->session_context['issued']>=self::SESSION_ROTATION_SECONDS) {
+      $this->issue_session($this->session_context['user'],true);
+    }
+    return $this->session_context;
+  }
+  private function issue_session($user,$replace_current=true) {
+    if (!($user instanceof WP_User) || !class_exists('WP_Session_Tokens')) return false;
+    $current=$this->current_session(false);
+    if ($replace_current && $current) $current['manager']->destroy($current['token']);
+    $issued=time(); $manager=WP_Session_Tokens::get_instance($user->ID); $token=$manager->create($issued+self::SESSION_TTL);
+    $this->set_session_cookie($user->ID,$issued,$token);
+    return $this->session_context=['user'=>$user,'token'=>$token,'issued'=>$issued,'manager'=>$manager];
+  }
+  private function destroy_current_session() {
+    $current=$this->current_session(false);
+    if ($current) $current['manager']->destroy($current['token']);
+    $this->session_context=null; $this->session_checked=true; $this->clear_session_cookie();
+  }
+  private function csrf_token($context) {
+    return $context ? hash_hmac('sha256','okoume-csrf-v1|'.$context['token'],wp_salt('nonce')) : '';
+  }
+  private function require_authenticated_mutation() {
+    $context=$this->current_session(false);
+    if (!$context) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]);
+    if (!$this->origin_is_allowed($this->request_origin())) return new WP_Error('invalid_origin','Cette action doit être envoyée depuis le site OKOUMÉ.',['status'=>403]);
+    $provided=isset($_SERVER['HTTP_X_OKOUME_CSRF']) ? trim((string)wp_unslash($_SERVER['HTTP_X_OKOUME_CSRF'])) : '';
+    if (!$provided || !hash_equals($this->csrf_token($context),$provided)) return new WP_Error('invalid_csrf','Votre session doit être actualisée avant de continuer.',['status'=>403]);
+    return $context;
+  }
+  private function user() { $context=$this->current_session(); return $context ? $context['user'] : false; }
+  private function session($user,$refresh_cookie=true) {
+    $context=$refresh_cookie ? $this->issue_session($user,true) : $this->current_session(false);
+    if (!$context || $context['user']->ID!==$user->ID) $context=$this->issue_session($user,false);
+    $csrf=$this->csrf_token($context); if ($csrf) header('X-OKOUME-CSRF: '.$csrf,true);
+    return ['id'=>$user->ID,'email'=>$user->user_email,'first_name'=>$user->first_name,'last_name'=>$user->last_name,'phone'=>get_user_meta($user->ID,'_okoume_phone',true),'address'=>get_user_meta($user->ID,'_okoume_address',true),'phone_verified'=>(bool)get_user_meta($user->ID,'_okoume_phone_verified',true)];
+  }
+  private function attempts_key($identifier) { return $this->rate_key('auth_attempt',$identifier); }
+  private function locked($identifier) { return (int)get_transient($this->attempts_key($identifier)) >= 5; }
+  private function failed($identifier) { $key=$this->attempts_key($identifier); set_transient($key,(int)get_transient($key)+1,15*MINUTE_IN_SECONDS); }
   public function auth($request) {
-    $action=$request['action']; if ($action==='logout') { setcookie(self::COOKIE,'',['expires'=>time()-3600,'path'=>'/','secure'=>is_ssl(),'httponly'=>true,'samesite'=>'Lax']); return ['ok'=>true]; }
+    $action=$request['action'];
+    if ($action==='logout') {
+      if ($this->current_session(false)) { $guard=$this->require_authenticated_mutation(); if (is_wp_error($guard)) return $guard; }
+      $this->destroy_current_session(); return ['ok'=>true];
+    }
+    $origin_guard=$this->require_trusted_origin(); if (is_wp_error($origin_guard)) return $origin_guard;
     $phone=$this->phone($request->get_param('phone')); $email=sanitize_email($request->get_param('email')); $password=(string)$request->get_param('password'); $attempt_key=$phone ?: $email;
     $first_name=sanitize_text_field($request->get_param('first_name')); $last_name=sanitize_text_field($request->get_param('last_name')); $address=sanitize_text_field($request->get_param('address')); $password_confirmation=(string)$request->get_param('password_confirmation');
     if (strlen($phone)<8 || strlen($phone)>15 || ($action==='register' && (!$email || !$first_name || !$last_name || !$address || strlen($password)<12 || $password!==$password_confirmation)) || ($action==='login' && !$password)) return new WP_Error('invalid_input',$action==='register'?'Renseignez tous les champs, avec un téléphone valide et deux mots de passe identiques de 12 caractères minimum.':'Téléphone et mot de passe requis.',['status'=>400]);
+    if (!$this->intake_allowed('auth',30,15*MINUTE_IN_SECONDS)) return new WP_Error('rate_limited','Trop de demandes. Réessayez dans quelques minutes.',['status'=>429]);
+    if ($action==='register' && !$this->intake_allowed('registration',5,HOUR_IN_SECONDS)) return new WP_Error('rate_limited','Trop de créations de compte depuis cette connexion. Réessayez plus tard.',['status'=>429]);
     if ($this->locked($attempt_key)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans 15 minutes.',['status'=>429]);
     if ($action==='register') {
       if (email_exists($email) || $this->user_by_phone($phone)) { $this->failed($attempt_key); return new WP_Error('registration_unavailable','Impossible de créer ce compte avec ces informations.',['status'=>409]); }
@@ -124,7 +271,16 @@ final class Okoume_Headless_Commerce {
     delete_transient($this->attempts_key($attempt_key)); return $this->session($user);
   }
   public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u,false); }
-  public function update_account($request) { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $first=sanitize_text_field($request->get_param('first_name')); $last=sanitize_text_field($request->get_param('last_name')); $address=sanitize_text_field($request->get_param('address')); $phone=$this->phone($request->get_param('phone')); if (!$first || !$last || !$address || strlen($phone)<8 || strlen($phone)>15) return new WP_Error('invalid_account','Renseignez des coordonnées valides.',['status'=>400]); $existing=$this->user_by_phone($phone); if ($existing && $existing->ID!==$u->ID) return new WP_Error('account_unavailable','Impossible de mettre à jour ces informations.',['status'=>409]); wp_update_user(['ID'=>$u->ID,'first_name'=>$first,'last_name'=>$last]); update_user_meta($u->ID,'_okoume_phone',$phone); update_user_meta($u->ID,'_okoume_address',$address); update_user_meta($u->ID,'billing_first_name',$first); update_user_meta($u->ID,'billing_last_name',$last); update_user_meta($u->ID,'billing_phone',$phone); update_user_meta($u->ID,'billing_address_1',$address); return $this->session(get_user_by('id',$u->ID),false); }
+  public function update_account($request) {
+    $context=$this->current_session(false); if (!$context) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]);
+    $guard=$this->require_authenticated_mutation(); if (is_wp_error($guard)) return $guard;
+    $u=$context['user']; if (!$this->intake_allowed('account_update',10,HOUR_IN_SECONDS,(string)$u->ID)) return new WP_Error('rate_limited','Trop de modifications. Réessayez plus tard.',['status'=>429]);
+    $first=sanitize_text_field($request->get_param('first_name')); $last=sanitize_text_field($request->get_param('last_name')); $address=sanitize_text_field($request->get_param('address')); $phone=$this->phone($request->get_param('phone'));
+    if (!$first || !$last || !$address || strlen($phone)<8 || strlen($phone)>15) return new WP_Error('invalid_account','Renseignez des coordonnées valides.',['status'=>400]);
+    $existing=$this->user_by_phone($phone); if ($existing && $existing->ID!==$u->ID) return new WP_Error('account_unavailable','Impossible de mettre à jour ces informations.',['status'=>409]);
+    wp_update_user(['ID'=>$u->ID,'first_name'=>$first,'last_name'=>$last]); update_user_meta($u->ID,'_okoume_phone',$phone); update_user_meta($u->ID,'_okoume_address',$address); update_user_meta($u->ID,'billing_first_name',$first); update_user_meta($u->ID,'billing_last_name',$last); update_user_meta($u->ID,'billing_phone',$phone); update_user_meta($u->ID,'billing_address_1',$address);
+    return $this->session(get_user_by('id',$u->ID),true);
+  }
   public function orders() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); $orders=wc_get_orders(['customer_id'=>$u->ID,'limit'=>30,'orderby'=>'date','order'=>'DESC']); return array_map(fn($o)=>['id'=>$o->get_id(),'number'=>$o->get_order_number(),'status'=>$o->get_status(),'total'=>$o->get_total(),'date'=>$o->get_date_created()->date('c'),'items'=>array_map(fn($i)=>['name'=>$i->get_name(),'quantity'=>$i->get_quantity()],$o->get_items())],$orders); }
   private function tracking_code($order) {
     $code=$order->get_meta('_okoume_tracking_code');
@@ -172,12 +328,17 @@ final class Okoume_Headless_Commerce {
   public function stripe_return($request) { try { $session_id=sanitize_text_field($request->get_param('session_id')); if (!$session_id) return new WP_Error('invalid_session','Session de paiement requise.',['status'=>400]); $session=WC_Stripe_API::request([], 'checkout/sessions/'.rawurlencode($session_id), 'GET'); $order_id=(int)($session->metadata->okoume_order_id ?? 0); $order=wc_get_order($order_id); if (!$order || $order->get_meta('_okoume_stripe_checkout_session')!==$session_id) return new WP_Error('not_found','Paiement introuvable.',['status'=>404]); if (($session->payment_status ?? '')==='paid' && !$order->is_paid()) { $order->payment_complete((string)($session->payment_intent ?? '')); $order->add_order_note('Paiement Stripe confirmé.'); } return ['number'=>$this->tracking_code($order),'paid'=>$order->is_paid(),'status'=>$order->get_status(),'total'=>$order->get_total()]; } catch (Exception $e) { return new WP_Error('stripe_error','La vérification du paiement est indisponible.',['status'=>502]); } }
   public function stripe_webhook() { $payload=file_get_contents('php://input'); $signature=$_SERVER['HTTP_STRIPE_SIGNATURE'] ?? ''; $secret=get_option('okoume_stripe_webhook_secret',''); if (!$secret || !preg_match('/t=(\d+).*v1=([a-f0-9]+)/',$signature,$matches) || !hash_equals($matches[2],hash_hmac('sha256',$matches[1].'.'.$payload,$secret))) return new WP_Error('invalid_signature','Signature invalide.',['status'=>400]); $event=json_decode($payload,true); if (($event['type'] ?? '')==='checkout.session.completed') { $object=$event['data']['object'] ?? []; $order=wc_get_order((int)($object['metadata']['okoume_order_id'] ?? 0)); if ($order && !$order->is_paid() && ($object['payment_status'] ?? '')==='paid') { $order->payment_complete((string)($object['payment_intent'] ?? '')); $order->add_order_note('Paiement Stripe confirmé par webhook.'); } } return ['received'=>true]; }
   public function checkout($request) {
+    /* Guest checkout remains available. A signed-in checkout must originate from the PWA. */
+    $origin_guard=$this->require_trusted_origin(); if (is_wp_error($origin_guard)) return $origin_guard;
+    $context=$this->current_session(false); $u=$context ? $context['user'] : false;
+    if ($u) { $guard=$this->require_authenticated_mutation(); if (is_wp_error($guard)) return $guard; }
     $items=$request->get_param('items'); $billing=(array)$request->get_param('billing'); if (!is_array($items)||!count($items)||empty($billing['phone'])) return new WP_Error('invalid_order','Panier et téléphone requis.',['status'=>400]);
     /* The browser is never trusted for product quantities.  Consolidate duplicate
        lines and validate the live WooCommerce stock before creating the order. */
     $requested=[]; foreach ($items as $line) { $id=(int)($line['id']??0); $qty=(int)($line['quantity']??0); if ($id<1||$qty<1) return new WP_Error('invalid_quantity','Quantité de produit invalide.',['status'=>400]); $requested[$id]=($requested[$id]??0)+$qty; }
     foreach ($requested as $id=>$qty) { $p=wc_get_product($id); if (!$p||$p->get_meta('_okoume_enabled')!=='yes'||!$p->is_in_stock()) return new WP_Error('unavailable','Un produit du panier n’est plus disponible.',['status'=>409]); if ($p->managing_stock() && (int)$p->get_stock_quantity()<$qty) return new WP_Error('insufficient_stock',sprintf('Stock insuffisant pour « %s » : %d disponible(s).',$p->get_name(),max(0,(int)$p->get_stock_quantity())),['status'=>409]); }
-    $u=$this->user(); $order=wc_create_order(['customer_id'=>$u?$u->ID:0]); foreach ($requested as $id=>$qty) { $p=wc_get_product($id); $order->add_product($p,$qty); }
+    if (!$this->intake_allowed('checkout',12,10*MINUTE_IN_SECONDS)) return new WP_Error('rate_limited','Trop de tentatives de commande. Réessayez dans quelques minutes.',['status'=>429]);
+    $order=wc_create_order(['customer_id'=>$u?$u->ID:0]); foreach ($requested as $id=>$qty) { $p=wc_get_product($id); $order->add_product($p,$qty); }
     $clean=[]; foreach (['first_name','last_name','email','phone','address_1','city'] as $key) $clean[$key]=sanitize_text_field($billing[$key]??''); $order->set_address($clean,'billing'); $order->set_address($clean,'shipping'); $delivery_method=sanitize_key($request->get_param('delivery_method')); if ($delivery_method==='home') { $shipping=new WC_Order_Item_Shipping(); $shipping->set_method_title('Livraison à domicile'); $shipping->set_method_id('okoume_home_delivery'); $shipping->set_total(2000); $order->add_item($shipping); } $payment_method=sanitize_key($request->get_param('payment_method')); if (!in_array($payment_method,['cod','airtel_money','stripe'],true)) return new WP_Error('invalid_payment','Méthode de paiement indisponible.',['status'=>400]); if ($payment_method==='airtel_money') { $order->set_payment_method('airtel_money'); $order->set_payment_method_title('Airtel Money — 077 638 864'); $note='Commande créée depuis le PWA OKOUMÉ. Règlement attendu par Airtel Money au 077 638 864.'; } elseif ($payment_method==='stripe') { $order->set_payment_method('stripe'); $order->set_payment_method_title('Carte bancaire — Stripe'); $note='Commande créée depuis le PWA OKOUMÉ. Paiement carte Stripe en attente.'; } else { $order->set_payment_method('cod'); $order->set_payment_method_title('Paiement à la livraison'); $note='Commande créée depuis le PWA OKOUMÉ. Paiement à la livraison.'; } $order->calculate_totals(); $order->update_status('on-hold',$note); $result=['id'=>$order->get_id(),'number'=>$this->tracking_code($order),'status'=>$order->get_status(),'total'=>$order->get_total()]; if ($payment_method==='stripe') { try { $result['redirect_url']=$this->stripe_checkout_session($order)->url; } catch (Exception $e) { $order->add_order_note('Erreur de préparation Stripe : '.$e->getMessage()); return new WP_Error('stripe_error','Le paiement carte est momentanément indisponible.',['status'=>502]); } } return $result;
   }
 }
