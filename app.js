@@ -445,4 +445,13 @@ render=function(){
   if(informationPages[route.path]){document.querySelector('#app').innerHTML=header()+informationPage(informationPages[route.path])+footer();mountCartCount();mountInstallPrompt();mountOfflineState();mountAccountAccess();requestAnimationFrame(()=>window.scrollTo(0,0));return}
   renderBeforeFunctionalRoutes();
 };
+
+// Identité visuelle officielle : mot-symbole sombre sur fond clair, clair sur fond sombre.
+const headerWithOfficialLogo=header;
+header=function(){return headerWithOfficialLogo().replace('<a class="brand" href="#/">OKO<b>U</b>MÉ</a>','<a class="brand brand-logo-link" href="#/" aria-label="OKOUMÉ — Accueil"><img src="/assets/logo-okoume-dark.png" alt="OKOUMÉ"></a>')};
+const footerWithOfficialLogo=footer;
+footer=function(){return footerWithOfficialLogo().replace('<a class="brand" href="#/">OKO<b>U</b>MÉ</a>','<a class="brand brand-logo-link brand-logo-light" href="#/" aria-label="OKOUMÉ — Accueil"><img src="/assets/logo-okoume-light.png" alt="OKOUMÉ"></a>')};
+const mountInstallPromptWithOfficialIcon=mountInstallPrompt;
+mountInstallPrompt=function(){mountInstallPromptWithOfficialIcon();const icon=document.querySelector('#install-okoume .install-icon');if(icon&&!icon.querySelector('img'))icon.innerHTML='<img src="/assets/icon-192.png" alt="">'};
+
 render();
