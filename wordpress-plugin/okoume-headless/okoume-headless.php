@@ -77,6 +77,7 @@ final class Okoume_Headless_Commerce {
     register_rest_route('okoume/v1','/products',[['methods'=>'GET','callback'=>[$this,'products'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/products/(?P<id>\d+)',[['methods'=>'GET','callback'=>[$this,'one_product'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/auth/(?P<action>login|register|logout)',[['methods'=>'POST','callback'=>[$this,'auth'],'permission_callback'=>'__return_true']]);
+    register_rest_route('okoume/v1','/auth/password-reset/(?P<action>request|confirm)',[['methods'=>'POST','callback'=>[$this,'password_reset'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/account',[['methods'=>'GET','callback'=>[$this,'account'],'permission_callback'=>'__return_true'],['methods'=>'POST','callback'=>[$this,'update_account'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/orders',[['methods'=>'GET','callback'=>[$this,'orders'],'permission_callback'=>'__return_true'],['methods'=>'POST','callback'=>[$this,'checkout'],'permission_callback'=>'__return_true']]);
     register_rest_route('okoume/v1','/orders/track',[['methods'=>'GET','callback'=>[$this,'track_order'],'permission_callback'=>'__return_true']]);
@@ -269,6 +270,79 @@ final class Okoume_Headless_Commerce {
       $user=$this->user_by_phone($phone); if (!$user || !wp_check_password($password,$user->user_pass,$user->ID)) { $this->failed($attempt_key); return new WP_Error('invalid_login','Identifiants incorrects.',['status'=>401]); }
     }
     delete_transient($this->attempts_key($attempt_key)); return $this->session($user);
+  }
+  private function password_reset_notice() {
+    return ['ok'=>true,'message'=>'Si un compte correspond à ces informations, les instructions de réinitialisation vous ont été envoyées.'];
+  }
+  private function password_reset_user($identifier) {
+    $identifier=trim((string)$identifier);
+    $email=sanitize_email($identifier);
+    if ($email && is_email($email)) return get_user_by('email',$email);
+    $phone=$this->phone($identifier);
+    return strlen($phone)>=8 && strlen($phone)<=15 ? $this->user_by_phone($phone) : false;
+  }
+  private function password_reset_url($user,$key) {
+    $payload=wp_json_encode(['l'=>$user->user_login,'k'=>$key]);
+    if (!is_string($payload) || !$payload) return '';
+    $token=rtrim(strtr(base64_encode($payload),'+/','-_'),'=');
+    $url='https://okoume.find-gabon.com/#/reset-password?token='.rawurlencode($token);
+    return esc_url_raw(apply_filters('okoume_password_reset_url',$url,$user,$key));
+  }
+  private function password_reset_token($token) {
+    $token=trim((string)$token);
+    if (!preg_match('/^[A-Za-z0-9_-]{32,512}$/D',$token)) return false;
+    $encoded=strtr($token,'-_','+/');
+    $remainder=strlen($encoded)%4;
+    if ($remainder) $encoded.=str_repeat('=',4-$remainder);
+    $payload=json_decode((string)base64_decode($encoded,true),true);
+    if (!is_array($payload) || !isset($payload['l'],$payload['k']) || !is_string($payload['l']) || !is_string($payload['k'])) return false;
+    $login=sanitize_user($payload['l'],true);
+    $key=trim($payload['k']);
+    return $login && preg_match('/^[A-Za-z0-9]{20,255}$/D',$key) ? ['login'=>$login,'key'=>$key] : false;
+  }
+  private function send_password_reset_link($user) {
+    if (!($user instanceof WP_User) || !$user->user_email) return false;
+    $key=get_password_reset_key($user);
+    if (is_wp_error($key)) return false;
+    $url=$this->password_reset_url($user,$key);
+    if (!$url) return false;
+    $name=sanitize_text_field($user->first_name) ?: 'Bonjour';
+    $site=sanitize_text_field(wp_specialchars_decode(get_option('blogname'),ENT_QUOTES));
+    $subject='['.$site.'] Réinitialisation de votre mot de passe';
+    $body="Bonjour {$name},\n\nUne demande de réinitialisation de mot de passe a été reçue pour votre compte OKOUMÉ.\n\nPour choisir un nouveau mot de passe, ouvrez ce lien :\n{$url}\n\nCe lien est personnel et expire automatiquement. Si vous n’êtes pas à l’origine de cette demande, vous pouvez ignorer cet e-mail.\n";
+    return wp_mail($user->user_email,$subject,$body,['Content-Type: text/plain; charset=UTF-8']);
+  }
+  private function invalidate_user_sessions($user_id) {
+    if (class_exists('WP_Session_Tokens')) WP_Session_Tokens::get_instance((int)$user_id)->destroy_all();
+    $this->session_context=null; $this->session_checked=true;
+    unset($_COOKIE[self::COOKIE],$_COOKIE[self::LEGACY_COOKIE]);
+    $this->clear_session_cookie();
+  }
+  public function password_reset($request) {
+    $origin_guard=$this->require_trusted_origin(); if (is_wp_error($origin_guard)) return $origin_guard;
+    $action=sanitize_key($request->get_param('action'));
+    if ($action==='request') {
+      $identifier=trim((string)$request->get_param('identifier'));
+      if (!$identifier) $identifier=trim((string)$request->get_param('email'));
+      if (!$identifier) $identifier=trim((string)$request->get_param('phone'));
+      if (!$this->intake_allowed('password_reset_request',5,HOUR_IN_SECONDS)) return new WP_Error('rate_limited','Veuillez patienter avant de demander un nouveau lien.',['status'=>429]);
+      if ($identifier && !$this->intake_allowed('password_reset_identifier',3,HOUR_IN_SECONDS,mb_strtolower($identifier))) return new WP_Error('rate_limited','Veuillez patienter avant de demander un nouveau lien.',['status'=>429]);
+      $user=$this->password_reset_user($identifier);
+      if ($user) $this->send_password_reset_link($user);
+      return $this->password_reset_notice();
+    }
+    $reset=$this->password_reset_token($request->get_param('token'));
+    $password=(string)$request->get_param('password');
+    $confirmation=(string)$request->get_param('password_confirmation');
+    if (!$this->intake_allowed('password_reset_confirm',10,15*MINUTE_IN_SECONDS)) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans quelques minutes.',['status'=>429]);
+    if (!$reset) return new WP_Error('invalid_reset_link','Ce lien de réinitialisation est invalide ou a expiré. Demandez un nouveau lien.',['status'=>400]);
+    if (strlen($password)<12 || !hash_equals($password,$confirmation)) return new WP_Error('invalid_password','Saisissez deux mots de passe identiques d’au moins 12 caractères.',['status'=>400]);
+    if (!$this->intake_allowed('password_reset_key',5,15*MINUTE_IN_SECONDS,$reset['login'])) return new WP_Error('rate_limited','Trop de tentatives. Réessayez dans quelques minutes.',['status'=>429]);
+    $user=check_password_reset_key($reset['key'],$reset['login']);
+    if (is_wp_error($user) || !($user instanceof WP_User)) return new WP_Error('invalid_reset_link','Ce lien de réinitialisation est invalide ou a expiré. Demandez un nouveau lien.',['status'=>400]);
+    reset_password($user,$password);
+    $this->invalidate_user_sessions($user->ID);
+    return ['ok'=>true,'message'=>'Votre mot de passe a été mis à jour.','account'=>$this->session($user,true)];
   }
   public function account() { $u=$this->user(); if (!$u) return new WP_Error('unauthorized','Connexion requise.',['status'=>401]); return $this->session($u,false); }
   public function update_account($request) {

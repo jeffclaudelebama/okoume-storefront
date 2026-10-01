@@ -1,0 +1,15 @@
+# OKOUMÉ — security headers
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Permissions-Policy "camera=(), geolocation=(), microphone=()"
+
+  # The storefront shell must be revalidated so an installed PWA never keeps
+  # an obsolete router or authentication flow after a publication.
+  <FilesMatch "^(index\.html|app\.js|commerce\.css|service-worker\.js)$">
+    Header always set Cache-Control "no-cache, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
+</IfModule>

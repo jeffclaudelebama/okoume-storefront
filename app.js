@@ -41,7 +41,7 @@ function tracking(){return `<main class="shell inner"><div class="crumb">Accueil
 const escapeHtml=value=>String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[char]));
 async function trackOrder(event){event.preventDefault();const result=document.querySelector('#trackingResult');const button=event.currentTarget.querySelector('button[type="submit"]');const label=button?.textContent;result.innerHTML='<p style="margin-top:20px;color:var(--muted)">Recherche de votre commande…</p>';if(button){button.disabled=true;button.textContent='Recherche en cours…'}try{const params=new URLSearchParams({number:trackingNumber.value,phone:trackingPhone.value});const response=await fetch(`${apiRoot}/wp-json/okoume/v1/orders/track?${params}`);const data=await response.json();if(!response.ok)throw new Error(data.message||'Commande introuvable.');const items=Array.isArray(data.items)?data.items:Object.values(data.items||{});result.innerHTML=`<div class="status" style="margin-top:20px"><b>Commande n° ${escapeHtml(data.number)}</b><br>${escapeHtml(data.status_label)}</div><p style="font-size:13px;color:var(--muted)">${items.length?items.map(item=>`${escapeHtml(item.name)} × ${item.quantity}`).join('<br>'):'Articles de la commande enregistrés.'}</p>`}catch(error){result.innerHTML=`<p style="margin-top:20px;color:var(--brand)">${escapeHtml(error.message)}</p>`}finally{if(button){button.disabled=false;button.textContent=label}}}
 function basic(title,text){return `<main class="shell inner"><div class="crumb">Accueil / ${title}</div><h1 class="page-title">${title}</h1><div class="form-wrap" style="margin-left:0"><div class="form-card"><p style="line-height:1.7;color:var(--muted)">${text}</p></div></div></main>`}
-function render(){let path=location.hash.slice(1)||'/';let content=path==='/'?home():path==='/catalogue'?catalogue():path.startsWith('/produit/')?product(path.split('/').pop()):path==='/panier'?cartPage():path==='/connexion'||path==='/compte'?form('login'):path==='/livraison'?form('checkout'):path==='/confirmation'?confirmation():path==='/suivi'?tracking():basic(path.slice(1).replaceAll('-',' ').replace(/\b\w/g,x=>x.toUpperCase()),'Retrouvez ici toutes les informations utiles concernant OKOUMÉ et vos achats.');document.querySelector('#app').innerHTML=header()+content+footer()}window.addEventListener('hashchange',render);render();loadProducts();
+function render(){let path=location.hash.slice(1)||'/';let content=path==='/'?home():path==='/catalogue'?catalogue():path.startsWith('/produit/')?product(path.split('/').pop()):path==='/panier'?cartPage():path==='/connexion'||path==='/compte'?form('login'):path==='/livraison'?form('checkout'):path==='/confirmation'?confirmation():path==='/suivi'?tracking():basic(path.slice(1).replaceAll('-',' ').replace(/\b\w/g,x=>x.toUpperCase()),'Retrouvez ici toutes les informations utiles concernant OKOUMÉ et vos achats.');document.querySelector('#app').innerHTML=header()+content+footer()}window.addEventListener('hashchange',()=>render());render();loadProducts();
 const okoumeWhatsApp='https://wa.me/24177638864';
 function mountAssistant(){if(document.querySelector('#okoume-assistant'))return;document.body.insertAdjacentHTML('beforeend',`<section class="assistant" id="okoume-assistant" aria-label="Assistant OKOUMÉ"><button class="assistant-launch" onclick="toggleAssistant()">◌ <span>Besoin d’aide ?</span></button><div class="assistant-panel" hidden><div class="assistant-head"><strong>Assistant OKOUMÉ</strong><button onclick="toggleAssistant()" aria-label="Fermer">×</button></div><div class="assistant-body" id="assistantMessages"><p>Bonjour ! Je peux vous renseigner sur nos appareils, livraisons, garanties et commandes.</p></div><form class="assistant-form" onsubmit="askAssistant(event)"><input id="assistantQuestion" required placeholder="Votre question…"><input id="assistantEmail" type="email" placeholder="Votre e-mail si suivi nécessaire"><button type="submit">Envoyer</button></form></div></section>`)}
 function toggleAssistant(){const panel=document.querySelector('.assistant-panel');panel.hidden=!panel.hidden}
@@ -50,7 +50,7 @@ document.addEventListener('click',event=>{if(event.target.closest('.subscribe bu
 function mountProductGallery(){const path=location.hash.slice(1);if(!path.startsWith('/produit/'))return;const product=products.find(item=>item.id===+path.split('/').pop());const gallery=document.querySelector('.gallery-main');if(!product||!gallery||gallery.dataset.ready||product.images.length<2)return;gallery.dataset.ready='true';const image=gallery.querySelector('img');image.id='product-main-image';const thumbs=document.createElement('div');thumbs.className='gallery-thumbs';product.images.forEach((photo,index)=>{const button=document.createElement('button');button.type='button';button.className=`gallery-thumb${index===0?' active':''}`;button.setAttribute('aria-label',`Voir la photo ${index+1} de ${product.name}`);const thumb=document.createElement('img');thumb.src=photo.src;thumb.alt='';button.appendChild(thumb);button.addEventListener('click',()=>{image.src=photo.src;image.alt=photo.alt||product.name;thumbs.querySelectorAll('.gallery-thumb').forEach(item=>item.classList.remove('active'));button.classList.add('active')});thumbs.appendChild(button)});gallery.insertAdjacentElement('afterend',thumbs)}
 new MutationObserver(mountProductGallery).observe(document.querySelector('#app'),{childList:true,subtree:true});
 function trustMarkup(kind='standard'){const items=`<article class="trust-item"><i aria-hidden="true">⇢</i><div><b>Livraison à domicile</b><span>2 000 FCFA partout à Libreville</span></div></article><article class="trust-item"><i aria-hidden="true">▣</i><div><b>Paiement sécurisé</b><span>Carte via Stripe</span></div></article><article class="trust-item"><i aria-hidden="true">◉</i><div><b>Airtel Money</b><span>Paiement vérifié</span></div></article><article class="trust-item"><i aria-hidden="true">⌖</i><div><b>Commande suivie</b><span>Suivez votre référence OKOUMÉ</span></div></article>`;return `<section class="trust-strip ${kind==='footer'?'footer-trust':kind==='hero'?'hero-trust':kind==='product'?'compact':''}" data-trust="${kind}" aria-label="Acheter en confiance"><div class="trust-items">${items}</div></section>`}
-function mountTrustSignals(){const footer=document.querySelector('.footer-grid');if(footer&&!footer.parentElement.querySelector('[data-trust="footer"]'))footer.insertAdjacentHTML('afterend',trustMarkup('footer'));const path=location.hash.slice(1)||'/';if(path.startsWith('/produit/')){const detail=document.querySelector('.purchase-column')||document.querySelector('.product-detail > div:last-child');const price=detail?.querySelector('.detail-price');if(detail&&!detail.querySelector('[data-trust="product"]'))(price||detail).insertAdjacentHTML(price?'afterend':'beforeend',trustMarkup('product'))}}
+function mountTrustSignals(){const path=location.hash.slice(1)||'/';document.querySelector('[data-trust="footer"]')?.remove();if(path.startsWith('/produit/')){const detail=document.querySelector('.purchase-column')||document.querySelector('.product-detail > div:last-child');const price=detail?.querySelector('.detail-price');if(detail&&!detail.querySelector('[data-trust="product"]'))(price||detail).insertAdjacentHTML(price?'afterend':'beforeend',trustMarkup('product'))}}
 new MutationObserver(mountTrustSignals).observe(document.querySelector('#app'),{childList:true,subtree:true});
 function mountStripeCardOption(){const select=document.querySelector('#paymentMethod');if(select&&!select.querySelector('option[value="stripe"]')){const option=document.createElement('option');option.value='stripe';option.textContent='Carte bancaire sécurisée — Stripe';select.appendChild(option)}if((location.hash||'').startsWith('#/confirmation')&&sessionStorage.getItem('okoumePaymentMethod')==='stripe'){const status=document.querySelector('.empty .status');if(status)status.innerHTML='Paiement carte sécurisé par Stripe. Votre commande est confirmée après validation du paiement.'}}
 new MutationObserver(mountStripeCardOption).observe(document.querySelector('#app'),{childList:true,subtree:true});
@@ -99,7 +99,7 @@ const renderWithLoader=render;
 render=function(){const started=Date.now();showLoader('Chargement…');renderWithLoader();document.querySelector('#app')?.classList.remove('page-leaving');document.querySelector('#app')?.classList.add('page-entering');mountContentSkeletons();mountCartCount();setTimeout(()=>{document.querySelector('#app')?.classList.remove('page-entering');hideLoader()},Math.max(120,routeTransitionMs-(Date.now()-started)))};
 function mountContentSkeletons(){if(products.length)return;const path=location.hash.slice(1)||'/';if(!['/','/catalogue','/panier','/suivi','/compte','/connexion'].some(route=>path===route))return;const target=document.querySelector('.products')||document.querySelector('.form-card')||document.querySelector('.summary');if(target&&!target.querySelector('.skeleton-grid'))target.insertAdjacentHTML('beforeend','<div class="skeleton-grid" aria-label="Chargement du contenu"><i></i><i></i><i></i></div>')}
 const originalSetAccountMode=setAccountMode;
-setAccountMode=function(mode){originalSetAccountMode(mode);if(mode==='login'){const form=document.querySelector('#phoneAccountForm form');if(form&&!form.querySelector('.forgot-password'))form.insertAdjacentHTML('beforeend','<a class="forgot-password" href="#/contact">Mot de passe oublié ?</a>')}};
+setAccountMode=function(mode){originalSetAccountMode(mode);if(mode==='login'){const form=document.querySelector('#phoneAccountForm form');if(form&&!form.querySelector('.forgot-password'))form.insertAdjacentHTML('beforeend','<a class="forgot-password" href="#/reset-password" onclick="openPasswordReset(event)">Mot de passe oublié ?</a>')}};
 function pwaDismissed(){return Number(localStorage.getItem('okoume-install-dismissed')||0)>Date.now()-7*24*60*60*1000}
 mountInstallPrompt=function(){if(document.querySelector('#install-okoume')||pwaDismissed()||window.matchMedia('(display-mode: standalone)').matches||navigator.standalone)return;const ios=/iPad|iPhone|iPod/.test(navigator.userAgent);if(!deferredInstallPrompt&&!ios)return;document.body.insertAdjacentHTML('beforeend',`<section id="install-okoume" class="install-pwa" aria-label="Installer l’application OKOUMÉ"><button class="install-close" aria-label="Fermer">×</button><div class="install-icon">OK</div><div><strong>OKOUMÉ, toujours à portée de main</strong><p>${ios?'Touchez Partager, puis « Sur l’écran d’accueil ».':'Installez l’application pour ouvrir la boutique plus vite et suivre vos commandes.'}</p><button class="install-action">${ios?'Voir les instructions':'Installer l’application'}</button></div></section>`);const panel=document.querySelector('#install-okoume');panel.querySelector('.install-close').addEventListener('click',()=>{localStorage.setItem('okoume-install-dismissed',String(Date.now()));panel.remove()});panel.querySelector('.install-action').addEventListener('click',async()=>{if(ios){panel.querySelector('p').textContent='Safari : touchez Partager, faites défiler puis choisissez « Sur l’écran d’accueil ».';return}deferredInstallPrompt.prompt();await deferredInstallPrompt.userChoice;deferredInstallPrompt=null;panel.remove()})};
 setTimeout(mountInstallPrompt,900);
@@ -165,7 +165,7 @@ function mountAccountAccess(){const mobile=document.querySelector('.mobile-nav a
 header=function(){const label=accountProfile?.first_name||'Compte';return `<header class="topbar"><div class="shell"><a class="brand" href="#/">OKO<b>U</b>MÉ</a><nav class="links"><a href="#/" class="active">Accueil</a><a href="#/catalogue">Boutique</a><a href="#/livraison">Livraison</a><a href="#/faq">FAQ</a><a href="#/contact">Contact</a></nav><div class="actions"><button class="search hide-mobile" type="button" onclick="openSearch(event)" aria-label="Rechercher dans la boutique">⌕</button><button class="account-link hide-mobile" type="button" onclick="openAccountModal(event)" aria-label="Ouvrir mon compte"><span class="account-icon" aria-hidden="true">◯</span><span id="header-account-label">${escapeHtml(label)}</span></button><a class="icon-link" href="#/panier"><span class="icon">🛒</span><span class="hide-mobile">Panier</span><small>${cart.length||''}</small></a><a class="icon-link hide-mobile" href="#/suivi"><span class="icon">⌖</span>Suivi</a></div></div></header>`};
 function closeAccountModal(){document.querySelector('#account-modal')?.remove()}
 function openAccountModal(event){event?.preventDefault();event?.stopPropagation();closeAccountModal();document.body.insertAdjacentHTML('beforeend','<section id="account-modal" class="account-modal-backdrop" role="presentation"><div class="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title"><button type="button" class="account-modal-close" aria-label="Fermer">×</button><div id="account-modal-body"></div></div></section>');const modal=document.querySelector('#account-modal');const close=()=>closeAccountModal();modal.querySelector('.account-modal-close').addEventListener('click',close);modal.addEventListener('click',click=>{if(click.target===modal)close()});document.addEventListener('keydown',function escape(key){if(key.key==='Escape'){close();document.removeEventListener('keydown',escape)}});renderAccountModal(accountProfile?'profile':'login')}
-function renderAccountModal(mode){const target=document.querySelector('#account-modal-body');if(!target)return;if(mode==='profile'&&accountProfile){target.innerHTML=`<p class="account-modal-kicker">MON COMPTE</p><h2 id="account-modal-title">Bonjour, ${escapeHtml(accountProfile.first_name||'')}</h2><p class="specs">${escapeHtml(accountProfile.email||'')}</p><div class="account-profile-actions"><a class="btn ghost" href="#/suivi" onclick="closeAccountModal()">Mes commandes</a><button type="button" class="account-logout">Se déconnecter</button></div>`;target.querySelector('.account-logout').addEventListener('click',logoutAccount);return}target.innerHTML=`<div class="account-modal-tabs"><button type="button" class="${mode==='login'?'active':''}" data-mode="login">Connexion</button><button type="button" class="${mode==='register'?'active':''}" data-mode="register">Créer un compte</button></div>${mode==='register'?`<h2 id="account-modal-title">Créer mon compte</h2><form onsubmit="modalAuth(event,'register')"><div class="two-fields"><div class="field"><label>PRÉNOM</label><input name="first_name" required autocomplete="given-name"></div><div class="field"><label>NOM</label><input name="last_name" required autocomplete="family-name"></div></div><div class="field"><label>NUMÉRO DE TÉLÉPHONE</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="077 63 88 64"></div><div class="field"><label>ADRESSE E-MAIL</label><input name="email" required type="email" autocomplete="email" placeholder="vous@exemple.com"></div><div class="field"><label>ADRESSE DE LIVRAISON</label><input name="address" required autocomplete="street-address" placeholder="Quartier, rue, repère précis"></div><div class="field"><label>MOT DE PASSE</label><input name="password" required minlength="12" type="password" autocomplete="new-password" placeholder="12 caractères minimum"></div><div class="field"><label>CONFIRMER LE MOT DE PASSE</label><input name="password_confirmation" required minlength="12" type="password" autocomplete="new-password"></div><button class="btn" type="submit">Créer mon compte&nbsp; →</button><p class="form-result" aria-live="polite"></p></form>`:`<h2 id="account-modal-title">Connexion</h2><p class="specs">Utilisez le numéro associé à votre compte.</p><form onsubmit="modalAuth(event,'login')"><div class="field"><label>NUMÉRO DE TÉLÉPHONE</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="077 63 88 64"></div><div class="field"><label>MOT DE PASSE</label><input name="password" required type="password" autocomplete="current-password"></div><button class="btn" type="submit">Se connecter&nbsp; →</button><a class="forgot-password" href="#/contact" onclick="closeAccountModal()">Mot de passe oublié ?</a><p class="form-result" aria-live="polite"></p></form>`}`;target.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>renderAccountModal(button.dataset.mode)));setTimeout(()=>target.querySelector('input')?.focus(),0)}
+function renderAccountModal(mode){const target=document.querySelector('#account-modal-body');if(!target)return;if(mode==='profile'&&accountProfile){target.innerHTML=`<p class="account-modal-kicker">MON COMPTE</p><h2 id="account-modal-title">Bonjour, ${escapeHtml(accountProfile.first_name||'')}</h2><p class="specs">${escapeHtml(accountProfile.email||'')}</p><div class="account-profile-actions"><a class="btn ghost" href="#/suivi" onclick="closeAccountModal()">Mes commandes</a><button type="button" class="account-logout">Se déconnecter</button></div>`;target.querySelector('.account-logout').addEventListener('click',logoutAccount);return}target.innerHTML=`<div class="account-modal-tabs"><button type="button" class="${mode==='login'?'active':''}" data-mode="login">Connexion</button><button type="button" class="${mode==='register'?'active':''}" data-mode="register">Créer un compte</button></div>${mode==='register'?`<h2 id="account-modal-title">Créer mon compte</h2><form onsubmit="modalAuth(event,'register')"><div class="two-fields"><div class="field"><label>PRÉNOM</label><input name="first_name" required autocomplete="given-name"></div><div class="field"><label>NOM</label><input name="last_name" required autocomplete="family-name"></div></div><div class="field"><label>NUMÉRO DE TÉLÉPHONE</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="077 63 88 64"></div><div class="field"><label>ADRESSE E-MAIL</label><input name="email" required type="email" autocomplete="email" placeholder="vous@exemple.com"></div><div class="field"><label>ADRESSE DE LIVRAISON</label><input name="address" required autocomplete="street-address" placeholder="Quartier, rue, repère précis"></div><div class="field"><label>MOT DE PASSE</label><input name="password" required minlength="12" type="password" autocomplete="new-password" placeholder="12 caractères minimum"></div><div class="field"><label>CONFIRMER LE MOT DE PASSE</label><input name="password_confirmation" required minlength="12" type="password" autocomplete="new-password"></div><button class="btn" type="submit">Créer mon compte&nbsp; →</button><p class="form-result" aria-live="polite"></p></form>`:`<h2 id="account-modal-title">Connexion</h2><p class="specs">Utilisez le numéro associé à votre compte.</p><form onsubmit="modalAuth(event,'login')"><div class="field"><label>NUMÉRO DE TÉLÉPHONE</label><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="077 63 88 64"></div><div class="field"><label>MOT DE PASSE</label><input name="password" required type="password" autocomplete="current-password"></div><button class="btn" type="submit">Se connecter&nbsp; →</button><a class="forgot-password" href="#/reset-password" onclick="openPasswordReset(event)">Mot de passe oublié ?</a><p class="form-result" aria-live="polite"></p></form>`}`;target.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>renderAccountModal(button.dataset.mode)));setTimeout(()=>target.querySelector('input')?.focus(),0)}
 async function modalAuth(event,action){event.preventDefault();const form=event.currentTarget;const result=form.querySelector('.form-result');const button=form.querySelector('button[type="submit"]');const data=Object.fromEntries(new FormData(form));if(action==='register'&&data.password!==data.password_confirmation){result.textContent='Les deux mots de passe ne correspondent pas.';result.className='form-result error';return}const label=button.textContent;button.disabled=true;button.textContent=action==='login'?'Connexion en cours…':'Création du compte…';try{const response=await apiFetch(`/wp-json/okoume/v1/auth/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify(data)});const profile=await response.json();if(!response.ok)throw new Error(profile.message||'Impossible de continuer.');accountProfile=profile;clearLegacyProfileStorage();closeAccountModal();updateAccountAccess()}catch(error){result.textContent=error.message;result.className='form-result error'}finally{button.disabled=false;button.textContent=label}}
 async function logoutAccount(){try{if(!okoumeCsrfToken)await refreshAccount();await apiFetch('/wp-json/okoume/v1/auth/logout',{method:'POST',credentials:'include'})}finally{accountProfile=null;okoumeCsrfToken='';clearClientSessionStorage();closeAccountModal();updateAccountAccess()}}
 function preparePhoneFields(scope=document){scope.querySelectorAll('input[name="phone"]').forEach(input=>{input.type='tel';input.autocomplete='tel-national';input.inputMode='tel';input.setAttribute('data-lpignore','true');input.setAttribute('data-1p-ignore','true');if(input.value.includes('@'))input.value=''})}
@@ -187,3 +187,230 @@ const sendContactWithLocalState=sendContact;
 sendContact=async function(event){const button=event.currentTarget.querySelector('button[type="submit"]');const label=button?.textContent;if(button)button.textContent='Envoi du message…';try{return await sendContactWithLocalState(event)}finally{if(button)button.textContent=label}};
 checkout=async function(event){event.preventDefault();const form=event.currentTarget;const button=form.querySelector('button[type="submit"]');const lines=cartLines();if(!lines.length)return go('/catalogue');if(!await serverReachable()){formActionMessage(form,'Connexion requise pour finaliser la commande. Vérifiez votre réseau puis réessayez.');mountOfflineState();return}if(!okoumeCsrfToken)await refreshAccount();const unavailable=lines.find(line=>!line.product.inStock||line.quantity>availableQuantity(line.product));if(unavailable){formActionMessage(form,`« ${unavailable.product.name} » n’est plus disponible dans la quantité demandée.`);return go('/panier')}const user=accountProfile||{};const body={items:lines.map(line=>({id:line.product.id,quantity:line.quantity})),delivery_method:delivery.value,payment_method:paymentMethod.value,billing:{first_name:firstName.value,last_name:lastName.value,email:user.email||'',phone:phone.value,address_1:address.value,city:delivery.value==='home'?'Livraison à domicile':'Retrait OKOUMÉ'}};const label=button?.textContent;if(button){button.disabled=true;button.textContent='Vérification sécurisée…'}try{const response=await apiFetch('/wp-json/okoume/v1/orders',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.message||'La commande n’a pas pu être créée.');sessionStorage.setItem('okoumeOrder',data.number);sessionStorage.setItem('okoumeOrderTotal',data.total);sessionStorage.setItem('okoumePaymentMethod',paymentMethod.value);cart=[];save();if(data.redirect_url){location.href=data.redirect_url;return}go('/confirmation')}catch(error){formActionMessage(form,error.message);if(error.message.includes('Stock')||error.message.includes('disponible'))go('/panier')}finally{if(button){button.disabled=false;button.textContent=label}}};
 home=function(){const featured=products.slice(0,3);const leading=featured[0];const categories=[...new Set(products.map(item=>item.cat).filter(Boolean))].slice(0,4);return `<main class="home-redesign"><section class="home-intro"><div class="shell home-intro-grid"><div class="home-intro-copy"><p class="home-kicker">OKOUMÉ · LIBREVILLE</p><h1>Le bon appareil.<br><em>Sans le doute.</em></h1><p class="home-lead">Une sélection réduite, contrôlée et réellement disponible. Choisissez votre prochain appareil avec toutes les informations utiles, avant d’acheter.</p><div class="home-actions"><a class="btn" href="#/catalogue">Explorer les arrivages&nbsp; →</a><a class="home-text-link" href="#/suivi">Suivre une commande <span>↗</span></a></div></div><div class="home-feature">${leading?`<a href="#/produit/${leading.id}" class="home-feature-image"><img src="${leading.img}" alt="${leading.name}"><span>Disponible maintenant</span></a><div class="home-feature-meta"><p>${leading.cat} · ${leading.state}</p><h2>${leading.name}</h2><strong>${money(leading.price)}</strong></div>`:`<div class="home-feature-placeholder">Les nouveaux arrivages OKOUMÉ apparaissent ici.</div>`}</div></div></section><section class="home-proof"><div class="shell"><p>POUR ACHETER SIMPLEMENT</p><div><span>Stock réel</span><span>Produits contrôlés</span><span>Prix transparents</span><span>Assistance locale</span></div></div></section><section class="shell home-discover"><div class="home-section-heading"><p>CHOISIR PAR BESOIN</p><h2>Une boutique plus simple à parcourir.</h2></div><div class="home-category-list">${categories.map((category,index)=>`<a href="#/catalogue" class="home-category"><b>0${index+1}</b><span>${category}</span><i>→</i></a>`).join('')||'<p>Le catalogue est en cours de chargement.</p>'}</div></section><section class="shell home-selection"><div class="home-section-heading selection-heading"><div><p>ARRIVAGES DISPONIBLES</p><h2>À saisir maintenant.</h2></div><a href="#/catalogue" class="home-text-link">Voir tout le catalogue <span>→</span></a></div><div class="home-product-grid">${featured.map((product,index)=>`<a href="#/produit/${product.id}" class="home-product-card"><div class="home-product-photo"><img src="${product.img}" alt="${product.name}"><span>0${index+1}</span></div><div><p>${product.cat} · ${product.state}</p><h3>${product.name}</h3><strong>${money(product.price)}</strong></div></a>`).join('')||'<div class="skeleton-grid"><i></i><i></i><i></i></div>'}</div></section><section class="home-process"><div class="shell home-process-grid"><div><p class="home-kicker">COMMENT ÇA MARCHE</p><h2>Vous voyez.<br>Vous décidez.<br><em>On s’occupe du reste.</em></h2></div><ol><li><b>01</b><div><h3>Choisissez</h3><p>Consultez les photos, l’état réel et les détails de chaque appareil.</p></div></li><li><b>02</b><div><h3>Commandez</h3><p>Ajoutez l’appareil au panier, puis choisissez livraison ou retrait.</p></div></li><li><b>03</b><div><h3>Suivez</h3><p>Gardez votre référence OKOUMÉ pour suivre votre commande.</p></div></li></ol></div></section><section class="shell home-cta"><div><p>UN BESOIN PARTICULIER ?</p><h2>Parlons de votre prochain appareil.</h2></div><a href="#/contact" class="btn">Contacter OKOUMÉ&nbsp; →</a></section></main>`};
+
+/* Password recovery stays inside the storefront. The e-mail link contains a
+   one-time WordPress reset key, sent directly to the API and never stored locally. */
+let passwordResetReturnFocus=null;
+let passwordResetKeyHandler=null;
+function passwordResetContext(){
+  const hash=location.hash.slice(1);
+  const queryIndex=hash.indexOf('?');
+  const route=queryIndex<0?hash:hash.slice(0,queryIndex);
+  if(route!=='/reset-password'&&route!=='/reinitialiser-mot-de-passe')return null;
+  const params=new URLSearchParams(queryIndex<0?'':hash.slice(queryIndex+1));
+  return {token:params.get('token')||''};
+}
+function passwordResetFocusable(modal){return [...modal.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled])')].filter(element=>!element.hidden&&element.offsetParent!==null)}
+function closePasswordReset(options={}){
+  const modal=document.querySelector('#password-reset-modal');
+  if(!modal)return;
+  const restoreFocus=options.restoreFocus!==false;
+  if(passwordResetKeyHandler)document.removeEventListener('keydown',passwordResetKeyHandler);
+  passwordResetKeyHandler=null;
+  modal.remove();
+  const previous=passwordResetReturnFocus;
+  passwordResetReturnFocus=null;
+  if(restoreFocus&&previous&&document.contains(previous))setTimeout(()=>previous.focus(),0);
+}
+function passwordResetBackToLogin(){
+  const modal=document.querySelector('#password-reset-modal');
+  const routeContext=passwordResetContext();
+  const returnToAccount=modal?.dataset.returnToAccount==='true';
+  closePasswordReset({restoreFocus:!returnToAccount&&!routeContext});
+  if(routeContext){go('/connexion');return}
+  if(returnToAccount)openAccountModal();
+}
+function passwordResetModalShell(returnToAccount){
+  document.querySelector('#password-reset-modal')?.remove();
+  document.body.insertAdjacentHTML('beforeend','<section id="password-reset-modal" class="password-reset-modal-backdrop" role="presentation"><div class="password-reset-modal" role="dialog" aria-modal="true" aria-labelledby="password-reset-modal-title"><button type="button" class="password-reset-close" aria-label="Fermer">×</button><div id="password-reset-modal-body"></div></div></section>');
+  const modal=document.querySelector('#password-reset-modal');
+  modal.dataset.returnToAccount=returnToAccount?'true':'false';
+  modal.querySelector('.password-reset-close').addEventListener('click',()=>closePasswordReset());
+  modal.addEventListener('click',event=>{if(event.target===modal)closePasswordReset()});
+  passwordResetKeyHandler=event=>{
+    if(event.key==='Escape'){event.preventDefault();closePasswordReset();return}
+    if(event.key!=='Tab')return;
+    const focusable=passwordResetFocusable(modal);
+    if(!focusable.length)return;
+    const first=focusable[0];const last=focusable[focusable.length-1];
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+  };
+  document.addEventListener('keydown',passwordResetKeyHandler);
+  return modal;
+}
+function resetFormResult(form,message,type=''){
+  const result=form.querySelector('.form-result');
+  if(!result)return;
+  result.textContent=message;
+  result.className=`form-result${type?` ${type}`:''}`;
+}
+function renderPasswordResetRequest(){
+  const target=document.querySelector('#password-reset-modal-body');if(!target)return;
+  target.innerHTML=`<p class="account-modal-kicker">RÉCUPÉRER MON COMPTE</p><h2 id="password-reset-modal-title">Mot de passe oublié ?</h2><p class="specs">Indiquez l’e-mail ou le numéro de téléphone associé à votre compte.</p><form class="password-reset-form" novalidate><div class="field"><label for="password-reset-identifier">E-MAIL OU NUMÉRO DE TÉLÉPHONE</label><input id="password-reset-identifier" name="identifier" autocomplete="username" inputmode="text" placeholder="vous@exemple.com ou 077 63 88 64"></div><button class="btn" type="submit">Recevoir les instructions&nbsp; →</button><button class="password-reset-back" type="button">Retour à la connexion</button><p class="form-result" aria-live="polite"></p></form>`;
+  const form=target.querySelector('.password-reset-form');
+  form.addEventListener('submit',requestPasswordReset);
+  form.querySelector('.password-reset-back').addEventListener('click',passwordResetBackToLogin);
+  setTimeout(()=>form.elements.identifier.focus(),0);
+}
+function renderPasswordResetSent(){
+  const target=document.querySelector('#password-reset-modal-body');if(!target)return;
+  target.innerHTML=`<p class="account-modal-kicker">VÉRIFIEZ VOTRE BOÎTE E-MAIL</p><h2 id="password-reset-modal-title">Instructions envoyées</h2><p class="specs">Si un compte correspond à ces informations, les instructions de réinitialisation vous ont été envoyées.</p><p class="password-reset-note">Le lien est personnel et expire automatiquement. Pensez à vérifier vos courriers indésirables.</p><button class="btn password-reset-login" type="button">Retour à la connexion</button>`;
+  const button=target.querySelector('.password-reset-login');
+  button.addEventListener('click',passwordResetBackToLogin);
+  setTimeout(()=>button.focus(),0);
+}
+async function requestPasswordReset(event){
+  event.preventDefault();
+  const form=event.currentTarget;
+  const button=form.querySelector('button[type="submit"]');
+  const identifier=String(new FormData(form).get('identifier')||'').trim();
+  if(!identifier){resetFormResult(form,'Saisissez votre e-mail ou votre numéro de téléphone.','error');return}
+  const label=button.textContent;
+  button.disabled=true;button.textContent='Envoi en cours…';resetFormResult(form,'');
+  try{
+    const response=await apiFetch('/wp-json/okoume/v1/auth/password-reset/request',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({identifier})});
+    if(response.ok){renderPasswordResetSent();return}
+    const data=await response.json().catch(()=>({}));
+    if(response.status===429)throw new Error(data.message||'Veuillez patienter avant de demander un nouveau lien.');
+    throw new Error('Les instructions ne peuvent pas être envoyées pour le moment. Réessayez plus tard.');
+  }catch(error){resetFormResult(form,error.message||'Les instructions ne peuvent pas être envoyées pour le moment. Réessayez plus tard.','error')}
+  finally{if(document.contains(button)){button.disabled=false;button.textContent=label}}
+}
+function renderPasswordResetConfirm(context){
+  const target=document.querySelector('#password-reset-modal-body');if(!target)return;
+  target.innerHTML=`<p class="account-modal-kicker">SÉCURISER MON COMPTE</p><h2 id="password-reset-modal-title">Choisir un nouveau mot de passe</h2><p class="specs">Choisissez un mot de passe d’au moins 12 caractères. Il remplacera immédiatement l’ancien.</p><form class="password-reset-confirm" novalidate><div class="field"><label for="password-reset-new">NOUVEAU MOT DE PASSE</label><input id="password-reset-new" name="password" type="password" autocomplete="new-password" placeholder="12 caractères minimum"></div><div class="field"><label for="password-reset-confirmation">CONFIRMER LE MOT DE PASSE</label><input id="password-reset-confirmation" name="password_confirmation" type="password" autocomplete="new-password" placeholder="Retapez votre mot de passe"></div><button class="btn" type="submit">Mettre à jour le mot de passe&nbsp; →</button><button class="password-reset-back" type="button">Demander un nouveau lien</button><p class="form-result" aria-live="polite"></p></form>`;
+  const form=target.querySelector('.password-reset-confirm');
+  form.addEventListener('submit',event=>confirmPasswordReset(event,context));
+  form.querySelector('.password-reset-back').addEventListener('click',()=>{closePasswordReset({restoreFocus:false});go('/connexion');setTimeout(()=>openPasswordReset(),0)});
+  setTimeout(()=>form.elements.password.focus(),0);
+}
+function renderPasswordResetComplete(){
+  const target=document.querySelector('#password-reset-modal-body');if(!target)return;
+  target.innerHTML=`<p class="account-modal-kicker">COMPTE SÉCURISÉ</p><h2 id="password-reset-modal-title">Mot de passe mis à jour</h2><p class="specs">Votre mot de passe a été modifié et vous êtes maintenant connecté.</p><button class="btn password-reset-continue" type="button">Continuer&nbsp; →</button>`;
+  const button=target.querySelector('.password-reset-continue');
+  button.addEventListener('click',()=>{closePasswordReset({restoreFocus:false});if(passwordResetContext())go('/compte')});
+  setTimeout(()=>button.focus(),0);
+}
+async function confirmPasswordReset(event,context){
+  event.preventDefault();
+  const form=event.currentTarget;
+  const button=form.querySelector('button[type="submit"]');
+  const data=Object.fromEntries(new FormData(form));
+  if(data.password.length<12){resetFormResult(form,'Choisissez un mot de passe d’au moins 12 caractères.','error');return}
+  if(data.password!==data.password_confirmation){resetFormResult(form,'Les deux mots de passe ne correspondent pas.','error');return}
+  const label=button.textContent;
+  button.disabled=true;button.textContent='Mise à jour en cours…';resetFormResult(form,'');
+  try{
+    const response=await apiFetch('/wp-json/okoume/v1/auth/password-reset/confirm',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({token:context.token,password:data.password,password_confirmation:data.password_confirmation})});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.message||'Le mot de passe ne peut pas être mis à jour. Réessayez avec un nouveau lien.');
+    accountProfile=result.account&&typeof result.account==='object'?result.account:null;
+    if(!accountProfile)await refreshAccount();
+    clearLegacyProfileStorage();
+    updateAccountAccess();
+    renderPasswordResetComplete();
+  }catch(error){resetFormResult(form,error.message||'Le mot de passe ne peut pas être mis à jour. Réessayez avec un nouveau lien.','error')}
+  finally{if(document.contains(button)){button.disabled=false;button.textContent=label}}
+}
+function openPasswordReset(event,context=null){
+  event?.preventDefault();event?.stopPropagation();
+  const opener=event?.currentTarget instanceof HTMLElement?event.currentTarget:document.activeElement;
+  const returnToAccount=Boolean(opener instanceof Element&&opener.closest('#account-modal'));
+  closePasswordReset({restoreFocus:false});
+  passwordResetReturnFocus=opener instanceof HTMLElement?opener:null;
+  closeAccountModal();
+  const modal=passwordResetModalShell(returnToAccount);
+  const resetContext=context||passwordResetContext();
+  if(resetContext?.token)renderPasswordResetConfirm(resetContext);else renderPasswordResetRequest();
+  return modal;
+}
+const renderBeforePasswordReset=render;
+render=function(){
+  const context=passwordResetContext();
+  if(context){
+    document.querySelector('#app').innerHTML=header()+`<main class="shell inner"><div class="form-wrap"><div class="form-card password-reset-route"><p class="account-modal-kicker">RÉINITIALISATION</p><h1 class="page-title">Préparation de votre réinitialisation…</h1></div></div></main>`+footer();
+    mountCartCount();mountInstallPrompt();mountOfflineState();mountAccountAccess();
+    requestAnimationFrame(()=>openPasswordReset(null,context));
+    return;
+  }
+  renderBeforePasswordReset();
+};
+window.addEventListener('hashchange',()=>closePasswordReset({restoreFocus:false}));
+
+/* Functional catalogue filters and complete information pages.  These routes
+   intentionally render from the final router so direct URLs and ordinary clicks
+   use the same current interface. */
+function storefrontRoute(){
+  const hash=location.hash.slice(1)||'/';
+  const queryIndex=hash.indexOf('?');
+  return {path:queryIndex<0?hash:hash.slice(0,queryIndex),params:new URLSearchParams(queryIndex<0?'':hash.slice(queryIndex+1))};
+}
+function catalogueState(){
+  const {params}=storefrontRoute();
+  return {category:params.get('category')||'',condition:params.get('condition')||'',sort:params.get('sort')||'newest'};
+}
+function catalogueOptions(values,current,emptyLabel){
+  return [`<option value="">${emptyLabel}</option>`,...values.map(value=>`<option value="${escapeHtml(value)}"${value===current?' selected':''}>${escapeHtml(value)}</option>`)].join('');
+}
+function catalogueProductCard(product){
+  const id=Number(product.id);
+  const inStock=product.inStock!==false;
+  const state=inStock?product.state||'OCCASION':'RUPTURE';
+  const price=money(product.price);
+  const oldPrice=product.salePrice&&product.regularPrice?`<s class="old-price">${money(product.regularPrice)}</s>`:'';
+  return `<article class="product product-card-linkable"><a class="product-card-link" href="#/produit/${id}" aria-label="Voir ${escapeHtml(product.name)}"><div class="product-img"><img src="${escapeHtml(product.img)}" alt="${escapeHtml(product.name)}"><span class="badge ${product.state==='NEUF'&&inStock?'good':''}">${escapeHtml(state)}</span></div><div class="product-info"><div class="product-cat">${escapeHtml(product.cat||'Électronique')}</div><h3>${escapeHtml(product.name)}</h3><div class="specs">${escapeHtml(product.spec||'Détails disponibles sur la fiche produit')}</div></div></a><div class="product-card-actions"><div><strong class="price">${price}</strong>${oldPrice}</div><button class="add" type="button"${inStock?'': ' disabled'} onclick="add(${id})">${inStock?'Ajouter':'Indisponible'}</button></div></article>`;
+}
+function catalogueProducts(state){
+  let items=products.filter(product=>(!state.category||product.cat===state.category)&&(!state.condition||product.state===state.condition));
+  if(state.sort==='price-asc')items=items.slice().sort((a,b)=>Number(a.price)-Number(b.price));
+  if(state.sort==='price-desc')items=items.slice().sort((a,b)=>Number(b.price)-Number(a.price));
+  if(state.sort==='name')items=items.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'fr'));
+  return items;
+}
+function setCatalogueFilter(key,value){
+  const state=catalogueState();
+  if(['category','condition','sort'].includes(key))state[key]=value;
+  const params=new URLSearchParams();
+  if(state.category)params.set('category',state.category);
+  if(state.condition)params.set('condition',state.condition);
+  if(state.sort&&state.sort!=='newest')params.set('sort',state.sort);
+  go(`/catalogue${params.toString()?`?${params.toString()}`:''}`);
+}
+function resetCatalogueFilters(){go('/catalogue')}
+function functionalCatalogue(){
+  const state=catalogueState();
+  const categories=[...new Set(products.map(product=>product.cat).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  const conditions=[...new Set(products.map(product=>product.state).filter(Boolean))];
+  const items=catalogueProducts(state);
+  const cards=!products.length?'<div class="catalogue-empty" aria-live="polite"><h2>La boutique se charge…</h2><p>Les appareils disponibles s’afficheront ici dès que la connexion est prête.</p></div>':items.length?items.map(catalogueProductCard).join(''):'<div class="catalogue-empty"><h2>Aucun appareil ne correspond à ces critères.</h2><p>Essayez une autre catégorie ou réinitialisez les filtres.</p><button class="btn ghost" type="button" onclick="resetCatalogueFilters()">Réinitialiser les filtres</button></div>';
+  return `<main class="shell inner"><div class="crumb"><a href="#/">Accueil</a> / Boutique</div><div class="catalogue-heading"><div><h1 class="page-title">La boutique OKOUMÉ</h1><p>Neuf, occasion et reconditionné : trouvez l’appareil qui vous convient.</p></div><a class="home-text-link" href="#/recherche">Rechercher un appareil <span>→</span></a></div><section class="catalogue-controls" aria-label="Filtrer les appareils"><label>CATÉGORIE<select onchange="setCatalogueFilter('category',this.value)">${catalogueOptions(categories,state.category,'Toutes les catégories')}</select></label><label>ÉTAT<select onchange="setCatalogueFilter('condition',this.value)">${catalogueOptions(conditions,state.condition,'Tous les états')}</select></label><label>TRIER PAR<select onchange="setCatalogueFilter('sort',this.value)"><option value="newest"${state.sort==='newest'?' selected':''}>Nouveautés</option><option value="price-asc"${state.sort==='price-asc'?' selected':''}>Prix croissant</option><option value="price-desc"${state.sort==='price-desc'?' selected':''}>Prix décroissant</option><option value="name"${state.sort==='name'?' selected':''}>Nom A–Z</option></select></label><button type="button" class="catalogue-reset" onclick="resetCatalogueFilters()">Effacer</button></section><p class="catalogue-count" aria-live="polite">${products.length?`${items.length} appareil${items.length>1?'s':''} disponible${items.length>1?'s':''}`:'Chargement des appareils…'}</p><section class="catalogue-product-grid">${cards}</section></main>`;
+}
+const informationPages={
+  '/faq':{title:'Questions fréquentes',intro:'Des réponses simples pour acheter, payer, être livré et suivre votre commande.',sections:[['Comment savoir si un appareil est disponible ?',"Le stock affiché est mis à jour dans la boutique. Si un appareil n’est plus disponible, vous pouvez demander à être prévenu de son retour."],['Quels sont les modes de livraison ?',"La livraison à domicile à Libreville coûte 2 000 FCFA. Le retrait OKOUMÉ est gratuit lorsque cette option est proposée pendant la commande."],['Quels paiements puis-je utiliser ?',"Les moyens de paiement disponibles sont affichés au moment de la commande. Les instructions de règlement sont toujours présentées avant toute validation."],['Comment suivre ma commande ?',"Utilisez la référence reçue après votre commande dans la page Suivi. Pour une ancienne commande, le numéro de téléphone peut être demandé afin de protéger vos informations."],['Comment obtenir de l’aide ?',"Utilisez le formulaire Contact, l’assistant du site ou écrivez à info@find-gabon.com. L’équipe vous répondra par e-mail."]]},
+  '/a-propos':{title:'À propos d’OKOUMÉ',intro:'OKOUMÉ sélectionne des appareils neufs et de seconde main pour proposer une expérience d’achat claire, locale et rassurante.',sections:[['Notre approche',"Chaque fiche présente les informations utiles pour décider : état, stockage, couleur, accessoires, contrôles effectués et défauts connus lorsqu’ils existent."],['Notre promesse',"Pas de surprise : le prix, la disponibilité et les modalités de livraison sont indiqués avant la validation de la commande."],['Besoin d’un conseil ?',"Dites-nous simplement ce que vous cherchez. Nous vous aidons à choisir un appareil adapté à votre besoin et à votre budget."]]},
+  '/cgv':{title:'Conditions générales de vente',intro:'Ces conditions résument les règles appliquées aux achats réalisés sur OKOUMÉ.',sections:[['Produits et disponibilité',"Les produits proposés sont présentés avec leurs caractéristiques et leur état. Une commande reste soumise à la confirmation de disponibilité par OKOUMÉ."],['Prix et commande',"Les prix affichés sont exprimés en FCFA. Avant toute validation, le client peut vérifier son panier, le mode de livraison et le moyen de paiement choisi."],['Livraison et retrait',"Les modalités, frais et informations nécessaires à la livraison sont affichés pendant le parcours de commande. Le client doit fournir ou confirmer une adresse de livraison exacte."],['Paiement et confirmation',"Le paiement est traité selon le moyen choisi au moment de la commande. Une confirmation et une référence de suivi sont communiquées après l’enregistrement de la commande."],['Assistance',"Pour toute question sur une commande, contactez l’équipe OKOUMÉ avec votre référence de commande via la page Contact ou à info@find-gabon.com."]]},
+  '/confidentialite':{title:'Confidentialité',intro:'OKOUMÉ utilise vos informations uniquement pour gérer votre compte, vos commandes et votre assistance.',sections:[['Données concernées',"Lors de la création d’un compte ou d’une commande, nous pouvons traiter votre nom, votre téléphone, votre e-mail, votre adresse de livraison et les informations liées à votre commande."],['Utilisation',"Ces données servent à créer votre compte, préparer la livraison ou le retrait, vous contacter au sujet de la commande et répondre à vos demandes d’assistance."],['Protection',"Les mots de passe sont gérés par les mécanismes sécurisés de WordPress. Ils ne sont jamais affichés, envoyés en clair par OKOUMÉ ni conservés dans le navigateur."],['Vos choix',"Vous pouvez demander la mise à jour de vos coordonnées ou toute question relative à vos données en écrivant à info@find-gabon.com."]]},
+  '/mentions-legales':{title:'Mentions légales',intro:'Informations de contact et règles d’utilisation du site OKOUMÉ.',sections:[['Contact',"Pour toute question concernant la boutique, une commande ou le site, contactez OKOUMÉ à info@find-gabon.com ou depuis le formulaire Contact."],['Utilisation du site',"Le contenu du site est fourni pour présenter les produits et services OKOUMÉ. Les informations d’un produit sont confirmées au moment de la commande."],['Mise à jour',"Les présentes informations peuvent évoluer afin de refléter les services effectivement proposés sur OKOUMÉ."]]}
+};
+function informationPage(page){
+  return `<main class="shell inner information-page"><div class="crumb"><a href="#/">Accueil</a> / ${page.title}</div><div class="information-intro"><h1 class="page-title">${page.title}</h1><p>${page.intro}</p></div><div class="information-sections">${page.sections.map(section=>`<article><h2>${section[0]}</h2><p>${section[1]}</p></article>`).join('')}</div><section class="information-contact"><div><p>UNE QUESTION ?</p><h2>Nous sommes là pour vous aider.</h2></div><a class="btn" href="#/contact">Contacter OKOUMÉ&nbsp; →</a></section></main>`;
+}
+footer=function(){return `<footer class="footer"><div class="shell"><div class="footer-grid"><div><a class="brand" href="#/">OKO<b>U</b>MÉ</a><p>L’électronique de confiance au Gabon. Appareils neufs et seconde main, contrôlés et garantis.</p><p>Libreville, Gabon<br>Assistance WhatsApp : +241 77 63 88 64</p></div><div><h4>NAVIGATION</h4><a href="#/">Accueil</a><a href="#/catalogue">Boutique</a><a href="#/livraison">Livraison &amp; retrait</a><a href="#/a-propos">À propos</a></div><div><h4>INFORMATIONS</h4><a href="#/faq">FAQ</a><a href="#/cgv">Conditions générales</a><a href="#/confidentialite">Confidentialité</a><a href="#/suivi">Suivi de commande</a></div><div><h4>ARRIVAGES</h4><p>Recevez les nouveautés et bons plans sur WhatsApp.</p><div class="subscribe"><input aria-label="Votre numéro WhatsApp" inputmode="tel" placeholder="Numéro WhatsApp"><button type="button">S’abonner</button></div></div></div><div class="copyright"><span>© OKOUMÉ 2026 — Électronique de confiance</span><span><a href="#/mentions-legales">Mentions légales</a><span aria-hidden="true"> · </span><a href="#/confidentialite">Confidentialité</a><span aria-hidden="true"> · </span><a href="#/livraison">Livraison</a></span></div></div></footer><nav class="mobile-nav"><a href="#/"><i>⌂</i>Accueil</a><a href="#/catalogue"><i>▦</i>Catalogue</a><a href="#/panier"><i>🛒</i>Panier</a><a href="#/suivi"><i>⌖</i>Suivi</a><a href="#/a-propos"><i>ⓘ</i>À propos</a></nav>`};
+document.addEventListener('click',event=>{
+  if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+  const link=event.target instanceof Element?event.target.closest('a.home-category'):null;
+  if(!link)return;
+  const category=link.querySelector('span')?.textContent?.trim();
+  if(!category)return;
+  event.preventDefault();
+  go(`/catalogue?category=${encodeURIComponent(category)}`);
+});
+const renderBeforeFunctionalRoutes=render;
+render=function(){
+  const route=storefrontRoute();
+  if(route.path==='/catalogue'){document.querySelector('#app').innerHTML=header()+functionalCatalogue()+footer();mountCartCount();mountInstallPrompt();mountOfflineState();mountAccountAccess();requestAnimationFrame(()=>window.scrollTo(0,0));return}
+  if(informationPages[route.path]){document.querySelector('#app').innerHTML=header()+informationPage(informationPages[route.path])+footer();mountCartCount();mountInstallPrompt();mountOfflineState();mountAccountAccess();requestAnimationFrame(()=>window.scrollTo(0,0));return}
+  renderBeforeFunctionalRoutes();
+};
+render();
