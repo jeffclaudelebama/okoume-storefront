@@ -1,6 +1,6 @@
-const CACHE='okoume-v12';
-const ASSETS=['/','/index.html','/app.js','/styles.css','/gallery.css','/trust.css','/commerce.css','/manifest.webmanifest','/assets/logo-okoume-dark.png','/assets/logo-okoume-light.png','/assets/icon-192.png','/assets/icon-512.png'];
-const NETWORK_FIRST=new Set(['/','/index.html','/app.js','/commerce.css']);
+const CACHE='okoume-v14-local-preview';
+const ASSETS=['/','/index.html','/app.js','/styles.css','/gallery.css','/trust.css','/commerce.css','/brand-contrast.css','/manifest.webmanifest','/assets/logo-okoume-dark.png','/assets/logo-okoume-light.png','/assets/icon-192.png','/assets/icon-512.png'];
+const NETWORK_FIRST=new Set(['/','/index.html','/app.js','/commerce.css','/brand-contrast.css']);
 const saveResponse=(cache,request,response)=>{if(response.ok&&response.type==='basic'&&!/no-store/i.test(response.headers.get('Cache-Control')||''))cache.put(request,response.clone());return response};
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));

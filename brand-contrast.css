@@ -1,0 +1,9 @@
+/* Rendu optimal et contraste des logos officiels OKOUMÉ */
+.brand-logo-link {
+  background: transparent;
+}
+
+.topbar .brand-logo-link,
+.footer .brand-logo-link {
+  background: transparent;
+}
