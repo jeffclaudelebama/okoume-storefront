@@ -1,3 +1,4 @@
 work/
 outputs/
 *.log
+.env.woocommerce.local
