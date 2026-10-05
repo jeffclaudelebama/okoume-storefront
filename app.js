@@ -94,11 +94,10 @@ render=function(){showLoader();appRenderWithPages();const path=location.hash.sli
 const productsLoader=loadProducts;
 loadProducts=async function(){showLoader('Mise à jour de la boutique…');try{await productsLoader()}finally{hideLoader();mountCartCount()}};
 
-const routeTransitionMs=900;
 const originalGo=go;
-go=function(path){showLoader('Ouverture de votre page…');document.querySelector('#app')?.classList.add('page-leaving');setTimeout(()=>originalGo(path),180)};
+go=function(path){document.querySelector('#app')?.classList.remove('page-leaving');originalGo(path)};
 const renderWithLoader=render;
-render=function(){const started=Date.now();showLoader('Chargement…');renderWithLoader();document.querySelector('#app')?.classList.remove('page-leaving');document.querySelector('#app')?.classList.add('page-entering');mountContentSkeletons();mountCartCount();setTimeout(()=>{document.querySelector('#app')?.classList.remove('page-entering');hideLoader()},Math.max(120,routeTransitionMs-(Date.now()-started)))};
+render=function(){renderWithLoader();document.querySelector('#app')?.classList.remove('page-leaving','page-entering');mountContentSkeletons();mountCartCount();hideLoader()};
 function mountContentSkeletons(){if(products.length)return;const path=location.hash.slice(1)||'/';if(!['/','/catalogue','/panier','/suivi','/compte','/connexion'].some(route=>path===route))return;const target=document.querySelector('.products')||document.querySelector('.form-card')||document.querySelector('.summary');if(target&&!target.querySelector('.skeleton-grid'))target.insertAdjacentHTML('beforeend','<div class="skeleton-grid" aria-label="Chargement du contenu"><i></i><i></i><i></i></div>')}
 const originalSetAccountMode=setAccountMode;
 setAccountMode=function(mode){originalSetAccountMode(mode);if(mode==='login'){const form=document.querySelector('#phoneAccountForm form');if(form&&!form.querySelector('.forgot-password'))form.insertAdjacentHTML('beforeend','<a class="forgot-password" href="#/reset-password" onclick="openPasswordReset(event)">Mot de passe oublié ?</a>')}};
